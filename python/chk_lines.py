@@ -42,3 +42,11 @@ def is_collinear(line1, line2, tol=1e-9):
 
     return False
   
+
+line31 = LineString([(0, 0), (4, 4)])
+line32 = LineString([(0, 4), (4, 0)])
+print("交差 [(0, 0), (4, 4)]、[(0, 4), (4, 0)] :", chk_lines(line31, line32))
+
+line35 = LineString([(1, 1), (5, 1)])
+line36 = LineString([(3, 1), (7, 1)])
+print("重なる線分 [(1, 1), (5, 1)]、[(3, 1), (7, 1)] :", chk_lines(line35, line36))
