@@ -49,6 +49,10 @@ def chk_line_polygon2(polygon1, polygon2, line):
     2つの多角形の差分を算出し、差分の内部に線分が存在するかチェック
     polygon1からpolygon2を差し引き
     """
+    # 多角形が重なっていない場合
+    if not polygon1.intersects(polygon2) or polygon1.touches(polygon2):
+        return False
+    
     difference = polygon1.difference(polygon2)
         
     polygons = []
