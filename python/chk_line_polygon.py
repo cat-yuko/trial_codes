@@ -55,3 +55,4 @@ def distance_to_polygon_edge(polygon, point):
         return 0.0
     else:  # 外部の点
         return polygon.boundary.distance(point)
+
