@@ -44,6 +44,28 @@ def chk_line_polygon(polygon, line):
                 return True
         
 
+def chk_line_polygon2(polygon1, polygon2, line):
+    """
+    2つの多角形の差分を算出し、差分の内部に線分が存在するかチェック
+    polygon1からpolygon2を差し引き
+    """
+    difference = polygon1.difference(polygon2)
+        
+    polygons = []
+    if difference.geom_type == 'MultiPolygon':
+        for polygon in difference.geoms:
+            polygons.append(polygon)
+    elif difference.geom_type == 'Polygon':
+        polygons = difference
+
+    for polygon in polygons:
+        # 線分が多角形の内部または境界
+        if polygon.covers(line):
+            return True
+        
+    return False
+
+
 def distance_to_polygon_edge(polygon, point):
     """
     多角形と点の距離を算出
@@ -55,4 +77,3 @@ def distance_to_polygon_edge(polygon, point):
         return 0.0
     else:  # 外部の点
         return polygon.boundary.distance(point)
-
