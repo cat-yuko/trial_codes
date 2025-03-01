@@ -81,3 +81,17 @@ def distance_to_polygon_edge(polygon, point):
         return 0.0
     else:  # 外部の点
         return polygon.boundary.distance(point)
+
+
+# 多角形の内部に線分が存在するか
+polygon = Polygon([(0,0), (4,0), (4,4), (0,4)])
+line1 = LineString([(0,0), (4,0)])
+# 判定
+print("Line [(0,0), (4,0)] OK:", chk_line_polygon(polygon, line1))
+
+# 多角形の差分
+polygon1 = Polygon([(0, 0), (5, 0), (5, 6), (0, 6)])
+polygon2 = Polygon([(0, 2), (2, 2), (2, 0), (5, 0), (5, 4), (3, 4), (3, 6), (0, 6)])
+line1 = LineString([(0,0), (0,2)])
+# 判定
+print("Line [(0,0), (0,2)] OK:", chk_line_polygon2(polygon1, polygon2, line1))
