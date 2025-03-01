@@ -60,7 +60,7 @@ def chk_line_polygon2(polygon1, polygon2, line):
         for polygon in difference.geoms:
             polygons.append(polygon)
     elif difference.geom_type == 'Polygon':
-        polygons = difference
+        polygons.append(difference)
 
     for polygon in polygons:
         # 線分が多角形の内部または境界
