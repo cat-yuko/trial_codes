@@ -1,3 +1,5 @@
+from shapely.geometry import LineString, Point, Polygon, MultiPolygon
+
 def chk_line_polygon(polygon, line):
     """
     多角形の内部に線分が存在するかチェック
@@ -56,10 +58,10 @@ def chk_line_polygon2(polygon1, polygon2, line):
     difference = polygon1.difference(polygon2)
         
     polygons = []
-    if difference.geom_type == 'MultiPolygon':
+    if isinstance(difference, MultiPolygon): 
         for polygon in difference.geoms:
             polygons.append(polygon)
-    elif difference.geom_type == 'Polygon':
+    elif isinstance(difference, Polygon): 
         polygons.append(difference)
 
     for polygon in polygons:
