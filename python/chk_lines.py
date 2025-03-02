@@ -14,7 +14,9 @@ def chk_lines(line1, line2):
         return "全く重ならない"
     else:
         # 交差
-        if line1.intersects(p1) or line1.intersects(p2):
+        if line1.touches(p1) or line1.touches(p2):
+            return "交差端点で接する"
+        elif line1.intersects(p1) or line1.intersects(p2):
             return "1点のみ接する"
         else:
             return "交差"
