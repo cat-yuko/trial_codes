@@ -83,6 +83,21 @@ def distance_to_polygon_edge(polygon, point):
         return polygon.boundary.distance(point)
 
 
+
+# 多角形の結合・差
+# 2つの多角形を定義
+poly1 = Polygon([(0, 0), (4, 0), (4, 4), (0, 4)])
+poly2 = Polygon([(2, 2), (6, 2), (6, 6), (2, 6)])
+# 結合（ユニオン）
+merged_poly = poly1.union(poly2)
+# 複数の多角形を一括結合
+polygons = [poly1, poly2, poly3]
+merged_all = unary_union(polygons)
+# 重ならない部分を計算
+difference1 = poly1.difference(poly2)
+
+
+
 # 多角形の内部に線分が存在するか
 polygon = Polygon([(0,0), (4,0), (4,4), (0,4)])
 line1 = LineString([(0,0), (4,0)])
