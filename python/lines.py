@@ -65,18 +65,22 @@ def make_polygon():
 
     segments = []
     # 交差する線は分割する
-    for i in range(len(pre_segments)):
-        line1 = LineString(pre_segments[i])
-        segments.append(pre_segments[i])
+    for i, seg1 in enumerate(pre_segments):
+        line1 = LineString(seg1)
+        segments.append(seg1)
         for j in range(i + 1, len(pre_segments)):
-            line2 = LineString(pre_segments[j])
+            seg2 = pre_segments[j]
+            line2 = LineString(seg2)
             if chk_lines(line1, line2) == "1点のみ接する":
-                start, end = pre_segments[i]
                 intersection = line1.intersection(line2)
-                if pre_segments[i] in segments:
-                    segments.remove(pre_segments[i])
-                segments.append([start, (intersection.x, intersection.y)])
-                segments.append([(intersection.x, intersection.y), end])
+                if seg1 in segments:
+                    segments.remove(seg1)
+                start, end = seg1
+                new_segments = [
+                    [start, (intersection.x, intersection.y)],
+                    [(intersection.x, intersection.y), end]
+                ]
+                segments.extend(new_segments)
 
     # 隣接リストを作成（線分の接続関係）
     graph = defaultdict(list)
