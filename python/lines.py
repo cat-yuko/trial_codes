@@ -120,6 +120,7 @@ def find_polygon_path(graph):
 
     return path
 
+
 def chk_distance():
 
     poly = Polygon([(1, 1), (5, 1), (5, 5), (1, 5), (1, 3), (3, 3), (3, 2), (1, 2), (1, 1)])
