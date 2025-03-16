@@ -120,6 +120,106 @@ def find_polygon_path(graph):
 
     return path
 
+def chk_distance():
+
+    poly = Polygon([(1, 1), (5, 1), (5, 5), (1, 5), (1, 3), (3, 3), (3, 2), (1, 2), (1, 1)])
+    pre_segments = [
+        [(1, 1), (1, 6)],
+        [(2, 1), (2, 3)],
+        [(2, 3), (2, 5)],
+        [(3, 1), (3, 3)],
+        [(3, 3), (3, 5)],
+        [(4, 1), (4, 5)],
+        [(5, 1), (5, 3)],
+        [(5, 3), (5, 6)],
+        [(1, 5), (5, 5)],
+        [(1, 3), (4, 3)],
+        [(1, 1), (4, 1)],
+        [(4, 1), (6, 1)],
+        [(1, 2), (2, 2)],
+        [(2, 2), (3, 2)],
+        [(3, 2), (4, 2)],
+        [(4, 2), (5, 2)],
+        [(4, 3), (5, 3)],
+        [(1, 4), (2, 4)],
+        [(2, 4), (3, 4)],
+        [(3, 4), (4, 4)],
+        [(4, 4), (5, 4)],
+    ]
+
+    # ソート処理（x座標→y座標の昇順）
+    sorted_segments = sorted(pre_segments, key=lambda seg: (seg[0][0], seg[0][1], seg[1][0], seg[1][1]))
+
+    chk_point = []
+    segments = []
+    # 交差する点を算出
+    for seg1 in sorted_segments:
+        line1 = LineString(seg1)
+        start, end = line1.coords
+       
+        div_point = [start]
+        for seg2 in sorted_segments:
+            line2 = LineString(seg2)
+            
+            if seg1 == seg2:
+                continue
+            
+            if chk_lines(line1, line2) == "1点のみ接する":
+                intersection = line1.intersection(line2)
+                add = (intersection.x, intersection.y)
+                if add not in div_point:
+                    div_point.append(add)       
+                
+        
+        div_point.append(end)
+
+        print(div_point)
+
+        # 点で分割
+        sorted_div_point = sorted(div_point, key=lambda point: (point[0], point[1]))
+        for i in range(len(sorted_div_point) - 1):
+            item = sorted_div_point[i]
+            next = sorted_div_point[i + 1]
+            new_segments = [item, next]
+           
+            point_type = -1
+            if poly.touches(LineString(new_segments)):
+                 # 多角形内の境界線上
+                 point_type = 0
+
+            elif poly.covers(LineString(new_segments)):
+                # 多角形内
+                point_type = 1
+
+            
+            if point_type >= 0:
+                segments.append(new_segments)
+                
+                if item not in chk_point:
+                    chk_point.append([point_type, item])
+                if next not in chk_point:
+                    chk_point.append([point_type, next])
+        
+    chk_point = sorted(chk_point, key=lambda point: (point[0], point[1]))
+
+    # 左下の点からチェック（右上の点はチェック不要）
+    for cp in chk_point[:-1]:
+        segs = np.array([seg for seg in segments if seg[0][0] == cp[1][0] and seg[0][1] == cp[1][1]])
+        if cp[0] == 1:
+            # 多角形内の境界線上
+            # TODO 途中
+            pass
+
+        # 各点間の距離
+        distances = np.linalg.norm(segs[:, 1, :] - segs[:, 0, :], axis=1)
+        # 距離をチェック
+        result = distances > 10
+        if result.all():
+            return False
+
+    return True
+
+
 
 line31 = LineString([(0, 0), (4, 4)])
 line32 = LineString([(0, 4), (4, 0)])
