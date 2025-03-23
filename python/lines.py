@@ -221,6 +221,205 @@ def chk_distance():
     return True
 
 
+def chk_distance2():
+    print("---------------------chk_distance2-----------------")
+
+    poly = Polygon([(2, 3), (5, 0), (9, 4), (5, 8), (3, 6), (5, 4), (4, 3), (3, 4), (2, 3)])
+    data = [
+        [2, Decimal(2.0), Decimal(5.0), Decimal(3500.0), Decimal(3.0), Decimal(6.0), Decimal(3500.0), 0],
+        [2, Decimal(3.0), Decimal(6.0), Decimal(3500.0), Decimal(4.0), Decimal(7.0), Decimal(3500.0), 0],
+        [2, Decimal(4.0), Decimal(7.0), Decimal(3500.0), Decimal(6.0), Decimal(9.0), Decimal(3500.0), 0],
+        [2, Decimal(2.0), Decimal(3.0), Decimal(3500.0), Decimal(3.5), Decimal(4.5), Decimal(3500.0), 0],
+        [2, Decimal(3.5), Decimal(4.5), Decimal(3500.0), Decimal(6.0), Decimal(7.0), Decimal(3500.0), 0],
+        [2, Decimal(3.0), Decimal(2.0), Decimal(3500.0), Decimal(7.0), Decimal(6.0), Decimal(3500.0), 0],
+        [2, Decimal(4.0), Decimal(1.0), Decimal(3500.0), Decimal(8.0), Decimal(5.0), Decimal(3500.0), 0],
+        [2, Decimal(5.0), Decimal(0.0), Decimal(3500.0), Decimal(9.0), Decimal(4.0), Decimal(3500.0), 0],
+        [2, Decimal(2.0), Decimal(3.0), Decimal(3500.0), Decimal(5.0), Decimal(0.0), Decimal(3500.0), 0],
+        [2, Decimal(5.0), Decimal(8.0), Decimal(3500.0), Decimal(9.0), Decimal(4.0), Decimal(3500.0), 0],
+        [2, Decimal(3.0), Decimal(6.0), Decimal(3500.0), Decimal(4.0), Decimal(5.0), Decimal(3500.0), 0],
+        [2, Decimal(4.0), Decimal(7.0), Decimal(3500.0), Decimal(5.0), Decimal(6.0), Decimal(3500.0), 0],
+        [2, Decimal(3.0), Decimal(4.0), Decimal(3500.0), Decimal(4.0), Decimal(3.0), Decimal(3500.0), 0],
+        [2, Decimal(4.0), Decimal(5.0), Decimal(3500.0), Decimal(5.0), Decimal(4.0), Decimal(3500.0), 0],
+        [2, Decimal(5.0), Decimal(6.0), Decimal(3500.0), Decimal(6.0), Decimal(5.0), Decimal(3500.0), 0],
+        [2, Decimal(4.0), Decimal(3.0), Decimal(3500.0), Decimal(5.0), Decimal(2.0), Decimal(3500.0), 0],
+        [2, Decimal(5.0), Decimal(4.0), Decimal(3500.0), Decimal(6.0), Decimal(3.0), Decimal(3500.0), 0],
+        [2, Decimal(6.0), Decimal(5.0), Decimal(3500.0), Decimal(7.0), Decimal(4.0), Decimal(3500.0), 0],
+        [2, Decimal(5.0), Decimal(2.0), Decimal(3500.0), Decimal(6.0), Decimal(1.0), Decimal(3500.0), 0],
+        [2, Decimal(6.0), Decimal(3.0), Decimal(3500.0), Decimal(7.0), Decimal(2.0), Decimal(3500.0), 0],
+        [2, Decimal(7.0), Decimal(4.0), Decimal(3500.0), Decimal(8.0), Decimal(3.0), Decimal(3500.0), 0]
+    ]
+
+    np_data = np.array(data)
+
+    # 末尾に0の列を追加
+    np_data = np.column_stack((np_data, np.zeros(np_data.shape[0], dtype=int)))
+
+    # ソート
+    sorted_indices = np.lexsort((np_data[:, 0], np_data[:, 1], np_data[:, 2], np_data[:, 4], np_data[:, 5]))
+    sorted_data = np_data[sorted_indices]
+
+    segments = []
+    chk_point = []
+
+    # 同一線上を結合する
+    union_data = []
+    for i in range(len(sorted_data)):
+        seg1 = sorted_data[i]
+        print("seg1:",seg1)
+
+        if seg1[-1] == 1:
+            continue
+
+        line_t = LineString([(float(seg1[1]), float(seg1[2])), (float(seg1[4]), float(seg1[5]))])
+        union_data.append(line_t)
+
+        print(line_t)
+
+        for j in range(i + 1, len(sorted_data)):
+            seg2 = sorted_data[j]
+            
+            if seg2[-1] == 1:
+                continue
+
+            line_u = LineString([(float(seg2[1]), float(seg2[2])), (float(seg2[4]), float(seg2[5]))])
+
+            if chk_lines(line_t, line_u) == "同一線上 & 線が重ならない":
+                # 結合
+                # linemergeを使って2つのLineStringを結合
+                merged_line = linemerge([line_t, line_u])
+                combined_line = LineString([merged_line.coords[0], merged_line.coords[-1]])
+                seg1[-1] = 1
+                seg2[-1] = 1
+
+                union_data.remove(line_t)
+                union_data.append(combined_line)
+                line_t = combined_line
+
+    print("union_data:",union_data)
+
+    # 交差点で分割
+    for line in union_data:
+        l_start, l_end = line.coords
+
+        div_point = [l_start]
+        for div_line in union_data:
+
+            if line == div_line:
+                continue
+
+            d_start, d_end = div_line.coords
+
+            # 交点を算出
+            intersection = line.intersection(div_line)
+
+            # 交点が存在する場合
+            add_flg = False
+            if not intersection.is_empty:
+                cross = (intersection.x, intersection.y)
+
+                not_cross = d_end
+                
+                if poly.touches(Point(cross)):
+                    # 交点が多角形と接する場合
+                    add_flg = True
+                elif cross == d_start:
+                    # 交点が始点と一致
+                    not_cross = d_end
+                elif cross == d_end:
+                    # 交点が終点と一致
+                    not_cross = d_start
+                else:
+                    # 交差する場合
+                    add_flg = True
+
+                if l_start[0] == l_end[0]:
+                    # 縦線
+                    if cross[0] < not_cross[0]:
+                        add_flg = True
+
+                elif l_start[1] == l_end[1]:
+                    # 横線
+                    if cross[1] < not_cross[1]:
+                        add_flg = True
+
+                else:
+                    # 斜め
+                    slope = (Decimal(l_end[1]) - Decimal(l_start[1])) / (Decimal(l_end[0]) - Decimal(l_start[0]))
+
+                    if slope > 0:
+                        # 右上がり
+                        if cross[0] < not_cross[0] and cross[1] > not_cross[1]:
+                            add_flg = True
+                    else:
+                        # 左上がり
+                        if cross[0] < not_cross[0] and cross[1] < not_cross[1]:
+                            add_flg = True
+
+                if add_flg and cross not in div_point:
+                    div_point.append(cross) 
+                
+        
+        div_point.append(l_end)
+
+        # 点で分割
+        sorted_div_point = sorted(div_point, key=lambda point: (point[0], point[1]))
+        for i in range(len(sorted_div_point) - 1):
+            item = sorted_div_point[i]
+            next = sorted_div_point[i + 1]
+            new_segments = [item, next]
+           
+            if poly.covers(LineString(new_segments)):
+                # 多角形内
+                segments.append(new_segments)
+
+                if item not in chk_point:
+                    chk_point.append(item)
+                if next not in chk_point:
+                    chk_point.append(next)
+
+                if i == len(sorted_div_point) - 1:
+                    segments.append([next, next])
+            else:
+                if i != 0:
+                    segments.append([item, item])
+
+
+    print('------segments-----')
+    print("")
+    print(segments)
+
+    print('------chk_point-----')
+    print("")
+    print(chk_point)
+
+    # 左下の点からチェック
+    chk_point = sorted(chk_point, key=lambda point: (point[0], point[1]))
+    for cp in chk_point:
+        segs = np.array([seg for seg in segments if seg[0] == cp])
+        print("cp:",cp)
+        print("segs:",segs)
+
+        if len(segs) != 2:
+            return False
+        
+        # 各点間の距離
+        distances = np.sort(np.linalg.norm(segs[:, 1, :] - segs[:, 0, :], axis=1))
+        print("distances:",distances)
+        # 距離をチェック
+        # TODO 条件
+        if True:
+            # 両方向のチェック
+            result = (distances > 10).all()
+            if result:
+                return False
+        else:
+            # 片方のチェック
+            if distances[0] > 10:
+                return False
+    
+    return True
+
+
 
 line31 = LineString([(0, 0), (4, 4)])
 line32 = LineString([(0, 4), (4, 0)])
