@@ -222,8 +222,9 @@ def chk_distance():
 
 
 def chk_distance2():
-    print("---------------------chk_distance2-----------------")
 
+    print("---------------------chk_distance2-----------------")
+    
     poly = Polygon([(2, 3), (5, 0), (9, 4), (5, 8), (3, 6), (5, 4), (4, 3), (3, 4), (2, 3)])
     data = [
         [2, Decimal(2.0), Decimal(5.0), Decimal(3500.0), Decimal(3.0), Decimal(6.0), Decimal(3500.0), 0],
@@ -248,6 +249,22 @@ def chk_distance2():
         [2, Decimal(6.0), Decimal(3.0), Decimal(3500.0), Decimal(7.0), Decimal(2.0), Decimal(3500.0), 0],
         [2, Decimal(7.0), Decimal(4.0), Decimal(3500.0), Decimal(8.0), Decimal(3.0), Decimal(3500.0), 0]
     ]
+    """
+    poly = Polygon([(1, 1), (5, 1), (5, 3), (3, 3), (3, 5), (1, 5), (1, 1)])
+    data = [
+        [2, Decimal(1.0), Decimal(1.0), Decimal(3500.0), Decimal(1.0), Decimal(5.0), Decimal(3500.0), 0],
+        [2, Decimal(3.0), Decimal(5.0), Decimal(3500.0), Decimal(1.0), Decimal(5.0), Decimal(3500.0), 0],
+        [2, Decimal(3.0), Decimal(5.0), Decimal(3500.0), Decimal(3.0), Decimal(3.0), Decimal(3500.0), 0],
+        [2, Decimal(1.0), Decimal(3.0), Decimal(3500.0), Decimal(5.0), Decimal(3.0), Decimal(3500.0), 0],
+        [2, Decimal(1.0), Decimal(1.0), Decimal(3500.0), Decimal(5.0), Decimal(1.0), Decimal(3500.0), 0],
+        [2, Decimal(5.0), Decimal(3.0), Decimal(3500.0), Decimal(5.0), Decimal(1.0), Decimal(3500.0), 0],
+        [2, Decimal(1.0), Decimal(4.0), Decimal(3500.0), Decimal(2.0), Decimal(4.0), Decimal(3500.0), 0],
+        [2, Decimal(2.0), Decimal(3.0), Decimal(3500.0), Decimal(2.0), Decimal(5.0), Decimal(3500.0), 0],
+        [2, Decimal(2.5), Decimal(2.0), Decimal(3500.0), Decimal(2.5), Decimal(3.0), Decimal(3500.0), 0],
+        [2, Decimal(1.0), Decimal(2.0), Decimal(3500.0), Decimal(5.0), Decimal(2.0), Decimal(3500.0), 0],
+        [2, Decimal(4.0), Decimal(1.0), Decimal(3500.0), Decimal(4.0), Decimal(2.0), Decimal(3500.0), 0]
+    ]
+    """
 
     np_data = np.array(data)
 
@@ -355,14 +372,18 @@ def chk_distance2():
                         if cross[0] < not_cross[0] and cross[1] < not_cross[1]:
                             add_flg = True
 
-                if add_flg and cross not in div_point:
-                    div_point.append(cross) 
+                if add_flg:
+                    if cross not in div_point:
+                        div_point.append(cross) 
                 
-        
-        div_point.append(l_end)
+        if l_end not in div_point:
+            div_point.append(l_end)
 
         # 点で分割
         sorted_div_point = sorted(div_point, key=lambda point: (point[0], point[1]))
+
+        print("sorted_div_point:",sorted_div_point)
+
         for i in range(len(sorted_div_point) - 1):
             item = sorted_div_point[i]
             next = sorted_div_point[i + 1]
@@ -374,10 +395,10 @@ def chk_distance2():
 
                 if item not in chk_point:
                     chk_point.append(item)
-                if next not in chk_point:
-                    chk_point.append(next)
+                #if next not in chk_point:
+                #    chk_point.append(next)
 
-                if i == len(sorted_div_point) - 1:
+                if i == len(sorted_div_point) - 2:
                     segments.append([next, next])
             else:
                 if i != 0:
