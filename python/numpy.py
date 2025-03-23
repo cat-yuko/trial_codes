@@ -66,3 +66,7 @@ def try_sort():
 
     print('')
     print('np_data_3:',np_data_3)
+
+    # ブロードキャストを利用する場合
+    np_data_3[sorted_indices, -1] = 3
+    
