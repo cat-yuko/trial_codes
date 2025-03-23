@@ -18,7 +18,7 @@ def try_sort():
 
     # ソートしてから更新する場合 --------------------------------
     # まず2列目（インデックス1）でソートし、次に1列目（インデックス0）でソート
-    sorted_indices = np.lexsort((np_data[:, 0], np_data[:, 1], np_data[:, 2], np_data[:, 4], np_data[:, 4]))
+    sorted_indices = np.lexsort((np_data[:, 0], np_data[:, 1], np_data[:, 2], np_data[:, 4], np_data[:, 5]))
     sorted_data = np_data[sorted_indices]
 
     print('sorted:',sorted_data)
