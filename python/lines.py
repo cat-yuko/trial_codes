@@ -440,6 +440,100 @@ def chk_distance2():
     
     return True
 
+# ↓未実行
+def serch_line(segments, segs):
+
+    def angle(line):
+        """線の角度をラジアンで取得"""
+        # 最初の2点を取得
+        (x1, y1), (x2, y2) = line.coords[:2] 
+        return math.atan2(y2 - y1, x2 - x1)
+    
+    def is_parallel(line1, line2, tol=1e-6):
+        """2本の線が平行かどうかチェック"""
+        angle1 = angle(line1)
+        angle2 = angle(line2)
+        return abs(angle1 - angle2) < tol or abs(abs(angle1 - angle2) - math.pi) < tol
+
+    err_flg = False
+    for seg in segs:
+        t_start, t_end = seg
+        # ユークリッド距離を計算
+        distance = np.linalg.norm(t_end - t_start)
+        
+        # TODO 範囲を変更
+        if 0 < distance < 10:
+            line_target = LineString(seg)
+
+            chk_seg = []
+            for s in segments:
+                line_s = LineString(s)
+                s_start, s_end = seg
+
+                if line_target == line_s:
+                    continue
+
+                if chk_lines(line_s, line_target) in {"交差端点で接する", "1点のみ接する"}:
+                    # 交点を算出
+                    intersection = line_s.intersection(line_target)
+
+                    add_flg = False
+                    ang = angle(line_target)
+
+                    # TODO 関数化する
+                    if t_start[0] == t_end[0]:
+                        # 縦線
+                        if intersection.x < s_end[0]:
+                            add_flg = True
+
+                    elif t_start[1] == t_end[1]:
+                        # 横線
+                        if intersection.y < s_end[1]:
+                            add_flg = True
+                            
+                    elif 0 < ang < math.pi / 2:
+                        # 右上がり
+                        if intersection.x < s_end[0] and intersection.y > s_end[1]:
+                            add_flg = True
+
+                    elif -math.pi < ang < -math.pi / 2:
+                        # 右下がり（下向きで右傾き）
+                        if intersection.x < s_end[0] and intersection.y < s_end[1]:
+                            add_flg = True
+
+                    if add_flg:
+                        chk_seg.append(line_s)
+
+                if len(chk_seg) == 2:
+                    break
+            
+            # 平行な線かチェック
+            if is_parallel(chk_seg[0], chk_seg[1]):
+                err_flg = True
+                break
+
+    return err_flg
+
+
+def line_type(line):
+    """線の種類を判定"""
+    ang = angle(line)
+    
+    if x1 == x2:  # 縦線
+        return "Vertical"
+    elif y1 == y2:  # 横線
+        return "Horizontal"
+    elif 0 < ang < math.pi / 2:  # 右上がり
+        return "Rising Right"
+    elif math.pi / 2 < ang < math.pi:  # 左上がり（上向きで左傾き）
+        return "Rising Left"
+    elif -math.pi / 2 < ang < 0:  # 左上がり（下向きで左傾き）
+        return "Falling Left"
+    elif -math.pi < ang < -math.pi / 2:  # 右下がり（下向きで右傾き）
+        return "Falling Right"
+    else:
+        return "Unknown"
+
 
 
 line31 = LineString([(0, 0), (4, 4)])
