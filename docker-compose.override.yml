@@ -1,0 +1,8 @@
+# 開発用
+services:
+  web:
+    volumes:
+      - .:/app  # ソースコードをコンテナにマウントして即時反映
+    environment:
+      - DEBUG=True
+    command: python manage.py runserver 0.0.0.0:8000  # DockerfileにCMDがあってもこっちが優先される
