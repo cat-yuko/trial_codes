@@ -1,0 +1,46 @@
+# Dockerイメージをビルドする際の「ビルドコンテキスト（送信するファイル群）」から、除外するファイルやフォルダを指定
+
+# バージョン管理系
+.git
+.gitignore
+
+# Pythonキャッシュ
+__pycache__/
+*.py[cod]
+*.pyo
+
+# OSやエディタ系
+.DS_Store
+.idea/
+.vscode/
+
+# 仮想環境
+venv/
+env/
+
+# ログ・一時ファイル
+*.log
+*.sqlite3
+*.db
+
+# テスト関連（必要なら除外）
+tests/
+coverage/
+
+# 環境変数・秘密情報（念のため）
+.env
+.env.*
+
+# ドキュメント・ビルド関連
+docs/
+build/
+dist/
+*.egg-info/
+
+# Dockerfileやdocker-composeファイル（イメージに不要）
+Dockerfile
+docker-compose.yml
+
+# 静的ファイルのビルド出力（collectstaticなど）
+media/
+static/
