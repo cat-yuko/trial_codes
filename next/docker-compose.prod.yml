@@ -1,0 +1,9 @@
+# 本番用
+services:
+  next:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: https://yourdomain.com
+    env_file:
+      - .env.production
+    command: npm run start
