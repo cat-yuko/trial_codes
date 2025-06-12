@@ -7,8 +7,13 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # 作業ディレクトリ
 WORKDIR /app
 
+# UID、GID ビルド時の引数
+ARG UID=1000
+ARG GID=1000 
+
 # 非rootユーザー（UID固定でproductionと合わせる）
-RUN useradd -u 1000 -m appuser
+RUN groupadd -g $GID appgroup && \
+    useradd -m -u $UID -g appgroup appuser 
 
 # 開発・ビルドに必要なパッケージ
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -31,8 +36,13 @@ RUN python manage.py collectstatic --noinput \
 # === 実行ステージ ===
 FROM python:3.13-slim-bullseye AS production
 
-# 非rootユーザー（UID固定でbuildと一致）
-RUN useradd -u 1000 -m appuser
+# UID、GID ビルド時の引数
+ARG UID=1000
+ARG GID=1000 
+
+# 非rootユーザー（UID固定でproductionと合わせる）
+RUN groupadd -g $GID appgroup && \
+    useradd -m -u $UID -g appgroup appuser  
 
 # 作業ディレクトリ
 WORKDIR /app
