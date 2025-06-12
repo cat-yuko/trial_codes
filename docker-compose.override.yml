@@ -1,8 +1,16 @@
 # 開発用
 services:
   web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        UID: "${UID}"   # .env ファイルから渡す
+        GID: "${GID}"
     volumes:
       - .:/app  # ソースコードをコンテナにマウントして即時反映
+    env_file:
+      - .env.dev        # .envファイル内でUIDとGIDを指定する（例）UID=1001 GID=1001
     environment:
       - DEBUG=True
     command: python manage.py runserver 0.0.0.0:8000  # DockerfileにCMDがあってもこっちが優先される
