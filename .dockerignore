@@ -38,7 +38,7 @@ dist/
 *.egg-info/
 
 # Dockerfileやdocker-composeファイル（イメージに不要）
-Dockerfile
+**/Dockerfile
 docker-compose.yml
 
 # 静的ファイルのビルド出力（collectstaticなど）
