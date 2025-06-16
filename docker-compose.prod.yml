@@ -6,8 +6,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       args:
-        UID: "${UID}"   # .env ファイルから渡す
-        GID: "${GID}"
+        UID: ${UID}   # .env ファイルから渡す
+        GID: ${GID}
     env_file:
       - .env.prod        # .envファイル内でUIDとGIDを指定する（例）UID=1001 GID=1001
     environment:
