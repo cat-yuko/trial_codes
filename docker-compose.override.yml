@@ -5,8 +5,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       args:
-        UID: "${UID}"   # .env ファイルから渡す
-        GID: "${GID}"
+        UID: ${UID}   # .env ファイルから渡す
+        GID: ${GID}
     volumes:
       - .:/app  # ソースコードをコンテナにマウントして即時反映
     env_file:
