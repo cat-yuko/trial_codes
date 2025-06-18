@@ -1,0 +1,58 @@
+// フロントエンドNext.js の使用例
+import axios_instance from "@/lib/axios_instance";
+
+export const submitFormWithFile = async (
+  name: string,
+  description: string,
+  file: File
+) => {
+  const formData = new FormData();
+  formData.append("name", name);               // テキスト入力
+  formData.append("description", description); // テキスト入力
+  formData.append("file", file);               // ファイル入力（glTF / PDF / 画像など）
+
+  const response = await axios_instance.post("/api/upload/", formData);
+  return response.data;
+};
+
+
+// バックエンド（Django REST framework）の例
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+from rest_framework import status
+
+class UploadView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, *args, **kwargs):
+        name = request.data.get("name")
+        description = request.data.get("description")
+        uploaded_file = request.FILES.get("file")
+
+        # バリデーション & 保存処理など
+        if not uploaded_file:
+            return Response({"error": "ファイルがありません"}, status=400)
+
+        # 例: ファイル保存やDB登録など
+        print(f"名前: {name}, 説明: {description}, ファイル: {uploaded_file.name}")
+
+        return Response({"message": "アップロード成功"}, status=status.HTTP_201_CREATED)
+
+
+// モデル付きで保存したい場合のDjango例
+// models.py
+from django.db import models
+
+class UploadedItem(models.Model):
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    file = models.FileField(upload_to="uploads/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+// views.py内で以下を記入
+item = UploadedItem.objects.create(
+    name=name,
+    description=description,
+    file=uploaded_file
+)
