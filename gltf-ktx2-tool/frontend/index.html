@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>glTF KTX2 圧縮ツール</title>
+</head>
+<body>
+  <h1>glTFファイル KTX2 圧縮</h1>
+  <form id="uploadForm" enctype="multipart/form-data">
+    <input type="file" name="file" id="fileInput" accept=".glb,.gltf" required />
+    <br />
+    <label>
+      <input type="radio" name="compression" value="etc1s" checked />
+      ETC1S（高圧縮・速い）
+    </label>
+    <label>
+      <input type="radio" name="compression" value="uastc" />
+      UASTC（高品質・大きめ）
+    </label>
+    <br />
+    <button type="submit">アップロードして圧縮</button>
+  </form>
+  <p id="message"></p>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const message = document.getElementById('message');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const formData = new FormData();
+      const fileInput = document.getElementById('fileInput');
+      const compression = document.querySelector('input[name="compression"]:checked').value;
+
+      formData.append('file', fileInput.files[0]);
+      formData.append('compression', compression);
+
+      message.textContent = 'アップロード中...';
+
+      try {
+        const res = await fetch('/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const result = await res.json();
+        if (result.error) {
+          message.textContent = 'エラー: ' + result.error;
+        } else {
+          message.innerHTML = `成功！ <a href="${result.output}" download>ダウンロード</a>`;
+        }
+      } catch (err) {
+        message.textContent = '通信エラー';
+      }
+    });
+  </script>
+</body>
+</html>
