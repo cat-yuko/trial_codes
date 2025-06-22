@@ -1,0 +1,29 @@
+// ディレクトリ構成
+// ├── backend/           ← Node.js + Express
+// │   ├── Dockerfile
+// │   ├── app.js
+// │   └── routes/transform.js
+// ├── frontend/          ← Tailwind + Three.js UI
+// │   ├── Dockerfile
+// │   └── public/index.html
+// │   └── src/
+// │       ├── main.js
+// │       └── style.css
+// ├── docker-compose.yml
+
+
+cd backend
+npm init -y
+npm install express multer axios socket.io
+npm install --save-dev nodemon 
+
+cd frontend
+npm init -y
+npm install socket.io-client three
+npm install vite --save-dev
+npm install -D tailwindcss postcss autoprefixer
+npm install -D tailwindcss@3.4.1 postcss autoprefixer
+npx tailwindcss init
+
+
+npm i tailwindcss @tailwindcss/postcss;
