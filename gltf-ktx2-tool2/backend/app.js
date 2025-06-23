@@ -26,10 +26,11 @@ app.post('/convert', upload.single('model'), async (req, res) => {
     const doc = await io.read(inputPath);
 
     await doc.transform(
-      reorder(),      // 頂点順序最適化
-      dedup(),        // 重複削除
-      flatten(),      // 階層平坦化
-      prune(),        // 未使用ノード削除
+      optimize(), // 以下の内容をまとめて最適化
+      //reorder(),      // 頂点順序最適化
+      //dedup(),        // 重複削除
+      //flatten(),      // 階層平坦化
+      //prune(),        // 未使用ノード削除
       textureCompress({
         encoder: 'toktx',
         targetFormat: format || 'uastc',
