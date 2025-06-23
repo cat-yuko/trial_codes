@@ -23,10 +23,13 @@ app.post('/convert', upload.single('model'), async (req, res) => {
       .registerExtensions([KHRTextureBasisu])
       .registerDependencies({ 'toktx': execFileSync });
 
+    const shouldFlatten = req.body.flatten === 'on'; // HTMLフォームからflatten オプション
+    
     const doc = await io.read(inputPath);
 
     await doc.transform(
       optimize(), // 以下の内容をまとめて最適化
+      //optimize({ flatten: shouldFlatten }),  // HTMLから取得する場合
       /*以下のようにfalseにして一部を無効かすることも可能
       optimize({
         prune: true,
