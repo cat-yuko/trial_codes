@@ -1,0 +1,8 @@
+ktx2-web-app/
+├── backend/
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── app.js
+├── uploads/        # 一時ファイル保存用
+├── docker-compose.yml
+└── frontend/       # Optional: React等（別途対応可）
