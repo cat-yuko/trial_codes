@@ -27,6 +27,14 @@ app.post('/convert', upload.single('model'), async (req, res) => {
 
     await doc.transform(
       optimize(), // 以下の内容をまとめて最適化
+      /*以下のようにfalseにして一部を無効かすることも可能
+      optimize({
+        prune: true,
+        dedup: true,
+        flatten: false,  // 階層保持、Node名/Transform情報/アニメーションに重要
+        reorder: true
+      })
+      */
       //reorder(),      // 頂点順序最適化
       //dedup(),        // 重複削除
       //flatten(),      // 階層平坦化
