@@ -38,3 +38,62 @@ Node ツリーの階層構造を「1つのメッシュ・1つのTransform」に�
 | Node名・構造を保持してプログラム側でアクセスしたい | flattenにより全て1ノード化されて参照不可になることがある                     |
 | ARアプリでNodeを部位として扱っている              | ボーン的に構造を持つものは潰さない方が良い                                  |
 
+
+
+✅ 部分的に flatten() を適用しない（対象を制限する）ことは可能だが、
+optimize() の flatten は「全体に一括適用」されてしまうため、optimize() を使わず flatten だけ手動制御する必要がある
+
+・例：flatten 以外を optimize 相当で実行し、flatten は除外または条件付き実行
+import {
+  reorder, dedup, prune, textureCompress, flatten
+} from '@gltf-transform/functions';
+
+await doc.transform(
+  reorder(),   // 描画順序最適化
+  dedup(),     // 重複削除
+  prune(),     // 未使用要素の削除
+  // flatten() は後で条件付き実行
+);
+
+✅ flatten() を条件付きで実行する方法
+🔹 条件：アニメーションが存在しない場合のみ flatten する
+if (doc.getRoot().listAnimations().length === 0) {
+  await doc.transform(flatten());
+}
+
+🔹 条件：あるノード名だけ flatten 対象に含めない
+残念ながら、flatten() 自体には「除外ノード指定」などのオプションは現在ありません（2025年6月時点）。
+そのため、代替案として：
+
+✔️ flatten 前に「保持したいノード」を Extras にタグ付け
+const nodesToKeep = doc.getRoot().listNodes().filter(node => node.getName().startsWith('KEEP_'));
+for (const node of nodesToKeep) {
+  node.setExtras({ preserve: true });
+}
+
+
+✅ 汎用的なツールとして glTF/GLB を扱う場合は、flatten() を外しておくのが無難で安全
+✅ 汎用ツールでは flatten を デフォルトで外す → オプションで有効化できるようにするのが理想
+
+// デフォルトでは flatten をスキップ
+await doc.transform(
+  optimize({ flatten: false }), // または個別に reorder/dedup/prune
+  textureCompress({ encoder: 'toktx', targetFormat: 'uastc' })
+);
+
+CLIやWeb UIなどで 「構造を単純化（flatten）する」オプションをチェックボックス等でONにできる設計がベストです。
+
+✅ flattenを有効化してよい典型的なケース
+| ケース                                    | flatten OK      |
+| ---------------------------------------- | --------------- |
+| glTFを静的に表示するだけの用途（ビューアー） | ✅ 安全         |
+| GLBを軽量にして配布するだけ                 | ✅ 有効         |
+| 1ノードにまとめたいなど意図的な場合          | ✅ 問題なし     |
+
+✅ flattenが危険なケース
+| ケース                       | flattenは避ける             |
+| --------------------------- | --------------------------- |
+| アニメーションあり            | ❌ 高リスク（壊れる）        |
+| Node階層で操作・参照するアプリ | ❌ NG（参照が破壊される）     |
+| glTFの再編集や再インポート予定 | ❌ flatten済みだと不便になる |
+
