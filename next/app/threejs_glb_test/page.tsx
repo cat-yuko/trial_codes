@@ -223,6 +223,20 @@ export default function GLBEdgesSilhouette() {
           if ((obj as THREE.Mesh).isMesh) {
             const mesh = obj as THREE.Mesh;
             const geom = mesh.geometry as THREE.BufferGeometry;
+
+            // 元のマテリアルを半透明にする
+            if (Array.isArray(mesh.material)) {
+              mesh.material.forEach((mat) => {
+                mat.transparent = true;
+                mat.opacity = 0.3; // お好みの透過度
+                mat.depthWrite = false; // Silhouetteの前面描画のため
+              });
+            } else {
+              mesh.material.transparent = true;
+              mesh.material.opacity = 0.3;
+              mesh.material.depthWrite = false;
+            }
+
             // Ensure index
             if (!geom.index)
               geom.setIndex([...Array(geom.attributes.position.count).keys()]);
@@ -283,6 +297,9 @@ export default function GLBEdgesSilhouette() {
             const silGeo = new THREE.BufferGeometry();
             const silMat = new THREE.LineBasicMaterial({
               color: "#ff00ff",
+              depthTest: false, // 深度テスト無効
+              transparent: true,
+              opacity: 1,
             });
             const lineSegments = new THREE.LineSegments(silGeo, silMat);
             lineSegments.frustumCulled = false; // generated every frame
@@ -417,10 +434,12 @@ export default function GLBEdgesSilhouette() {
         const f2 = e.f2; // may be null (boundary)
 
         // face -> facing sign
+        // s1 = 面 f1 の法線がカメラ方向に対して表か裏か（+1 表 / -1 裏）
         const s1 = (() => {
           view.copy(cameraPos).sub(c.faceCenter[f1]).normalize();
           return Math.sign(c.faceNormal[f1].dot(view));
         })();
+        // s2 = 隣接面 f2 の法線がカメラ方向に対して表か裏か（+1 表 / -1 裏 / null 境界）
         const s2 =
           f2 !== null
             ? (() => {
@@ -429,7 +448,29 @@ export default function GLBEdgesSilhouette() {
               })()
             : null;
 
-        const isSilhouette = s2 === null ? s1 > 0 : s1 * (s2 as number) < 0;
+        // isSilhouette = 表裏の差や境界によって、その辺がシルエットになるかどうか
+        //const isSilhouette = s2 === null ? s1 > 0 : s1 * (s2 as number) < 0;
+        const EPSILON = 1e-6; // 法線がほぼ平行か判定
+
+        const isSilhouette = (() => {
+          if (f2 === null) {
+            // 境界エッジは常に線
+            return true;
+          } else {
+            const normal1 = c.faceNormal[f1];
+            const normal2 = c.faceNormal[f2];
+
+            // 法線がほぼ平行ならシルエットにしない
+            const dotNormals = normal1.dot(normal2);
+            if (Math.abs(dotNormals - 1) < EPSILON) return false;
+
+            // 法線が90°以上離れていれば線を引く
+            if (dotNormals < 0) return true;
+
+            // 従来の正面・裏面の判定
+            return s1 * s2 < 0;
+          }
+        })();
         if (!isSilhouette) continue;
 
         const o1 = e.v1 * 3;
