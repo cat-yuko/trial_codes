@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils";
 
 /**
  * Drop this component into a Next.js App Router page (e.g., app/page.tsx)
@@ -21,7 +22,6 @@ export default function GLBEdgesSilhouette() {
 
   // DOM & 3D refs
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const canvasOverlayRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -138,7 +138,7 @@ export default function GLBEdgesSilhouette() {
 
   // File handling (drag & drop)
   useEffect(() => {
-    const el = canvasOverlayRef.current;
+    const el = mountRef.current;
     if (!el) return;
     const prevent = (e: DragEvent) => {
       e.preventDefault();
@@ -148,7 +148,11 @@ export default function GLBEdgesSilhouette() {
     const onDrop = (e: DragEvent) => {
       prevent(e);
       const file = e.dataTransfer?.files?.[0];
-      if (file && file.name.toLowerCase().endsWith(".glb")) {
+      if (
+        file &&
+        (file.name.toLowerCase().endsWith(".glb") ||
+          file.name.toLowerCase().endsWith(".gltf"))
+      ) {
         loadGLBFile(file);
       } else {
         //setStatus("Please drop a .glb file");
@@ -169,7 +173,7 @@ export default function GLBEdgesSilhouette() {
   const onPickFile = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".glb";
+    input.accept = ".glb,.gltf";
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) loadGLBFile(file);
@@ -222,7 +226,23 @@ export default function GLBEdgesSilhouette() {
         group.traverse((obj) => {
           if ((obj as THREE.Mesh).isMesh) {
             const mesh = obj as THREE.Mesh;
-            const geom = mesh.geometry as THREE.BufferGeometry;
+            // 表示用はオリジナルをそのまま使う
+            const originalGeom = mesh.geometry as THREE.BufferGeometry;
+
+            // 頂点を統合して「共有エッジ」を復元する
+            // シルエット抽出用にコピーして頂点マージ
+            let geomForSilhouette = originalGeom.clone();
+            // 位置だけ残して他の属性を削除
+
+            geomForSilhouette = geomForSilhouette.toNonIndexed(); // index展開
+            geomForSilhouette.deleteAttribute("normal");
+            geomForSilhouette.deleteAttribute("uv");
+
+            // 頂点をマージ
+            geomForSilhouette = BufferGeometryUtils.mergeVertices(
+              geomForSilhouette,
+              1e-6
+            );
 
             // 元のマテリアルを半透明にする
             if (Array.isArray(mesh.material)) {
@@ -237,13 +257,16 @@ export default function GLBEdgesSilhouette() {
               mesh.material.depthWrite = false;
             }
 
-            // Ensure index
-            if (!geom.index)
-              geom.setIndex([...Array(geom.attributes.position.count).keys()]);
-            const index = geom.index!;
-            const posAttr = geom.attributes.position as THREE.BufferAttribute;
+            // インデックスがないジオメトリに強制的にインデックスを設定。
+            if (!geomForSilhouette.index)
+              geomForSilhouette.setIndex([
+                ...Array(geomForSilhouette.attributes.position.count).keys(),
+              ]);
+            const index = geomForSilhouette.index!;
+            const posAttr = geomForSilhouette.attributes
+              .position as THREE.BufferAttribute;
 
-            // Build faces
+            // ジオメトリのインデックスから三角形（面）のリストを構築
             const faces: Face[] = [];
             for (let i = 0; i < index.count; i += 3) {
               const a = index.getX(i);
@@ -252,7 +275,7 @@ export default function GLBEdgesSilhouette() {
               faces.push({ a, b, c });
             }
 
-            // Build adjacency map (unique undirected edges)
+            // 各面からエッジを抽出し、隣接情報（どの面に接しているか f1, f2）を保存
             const edgeMap = new Map<EdgeKey, AdjEdge>();
             const addEdge = (i1: number, i2: number, f: number) => {
               const a = Math.min(i1, i2);
@@ -272,7 +295,7 @@ export default function GLBEdgesSilhouette() {
             });
             const edges = Array.from(edgeMap.values());
 
-            // Allocate per-frame buffers
+            // 後で毎フレーム更新するためのワークバッファを確保
             const worldPositions = new Float32Array(posAttr.count * 3);
             const faceNormal: THREE.Vector3[] = new Array(faces.length);
             const faceCenter: THREE.Vector3[] = new Array(faces.length);
@@ -281,8 +304,11 @@ export default function GLBEdgesSilhouette() {
               faceCenter[i] = new THREE.Vector3();
             }
 
-            // Hard Edges (EdgesGeometry)
-            const hardEdgesGeom = new THREE.EdgesGeometry(geom, threshold);
+            // ハードエッジ用の線を生成してメッシュに追加 (EdgesGeometry)
+            const hardEdgesGeom = new THREE.EdgesGeometry(
+              originalGeom,
+              threshold
+            );
             const hardEdgesMat = new THREE.LineBasicMaterial({
               color: 0x000000,
             });
@@ -293,7 +319,7 @@ export default function GLBEdgesSilhouette() {
             hardEdgeLines.visible = edgesEnabled;
             mesh.add(hardEdgeLines);
 
-            // Silhouette holder (empty, to be filled each frame)
+            // シルエット線を描画するための空ジオメトリを準備 毎フレーム更新して描画
             const silGeo = new THREE.BufferGeometry();
             const silMat = new THREE.LineBasicMaterial({
               color: "#ff00ff",
@@ -306,9 +332,10 @@ export default function GLBEdgesSilhouette() {
             lineSegments.visible = silhouetteEnabled;
             mesh.add(lineSegments);
 
+            // メッシュの情報をキャッシュに追加 シルエット更新で利用
             silhouetteCachesRef.current.push({
               mesh,
-              geom,
+              geom: geomForSilhouette,
               worldMatrix: new THREE.Matrix4(),
               faces,
               edges,
@@ -322,7 +349,7 @@ export default function GLBEdgesSilhouette() {
           }
         });
 
-        // Fit camera
+        // 読み込んだモデルにカメラを合わせて初期表示
         if (cameraRef.current && controlsRef.current) {
           const radius = Math.max(size.x, size.y, size.z) * 0.6 || 1;
           const cam = cameraRef.current;
@@ -450,7 +477,7 @@ export default function GLBEdgesSilhouette() {
 
         // isSilhouette = 表裏の差や境界によって、その辺がシルエットになるかどうか
         //const isSilhouette = s2 === null ? s1 > 0 : s1 * (s2 as number) < 0;
-        const EPSILON = 1e-6; // 法線がほぼ平行か判定
+        const EPSILON = 1e-3; // 法線がほぼ平行か判定  少し余裕を持たせる
 
         const isSilhouette = (() => {
           if (f2 === null) {
@@ -459,9 +486,24 @@ export default function GLBEdgesSilhouette() {
           } else {
             const normal1 = c.faceNormal[f1];
             const normal2 = c.faceNormal[f2];
+            const dotNormals = normal1.dot(normal2);
+
+            // ★ 追加: 直方体の稜線や円柱の円周（法線が直交 ≒ dot≈0）は必ず線
+            if (Math.abs(dotNormals) < EPSILON) {
+              return true;
+            }
+
+            // ★ 円柱の上下円の外周: 法線がほぼ平行でも (dot≈1)
+            //    エッジ方向ベクトルと法線を見て接線チェックを追加できる
+            //    → 必要なら edge ベクトルを取り出して判定
+            //    const edgeDir = new THREE.Vector3(
+            //      c.worldPositions[e.v2*3] - c.worldPositions[e.v1*3],
+            //      c.worldPositions[e.v2*3+1] - c.worldPositions[e.v1*3+1],
+            //      c.worldPositions[e.v2*3+2] - c.worldPositions[e.v1*3+2]
+            //    ).normalize();
+            //    if (Math.abs(edgeDir.dot(normal1)) < EPSILON) return true;
 
             // 法線がほぼ平行ならシルエットにしない
-            const dotNormals = normal1.dot(normal2);
             if (Math.abs(dotNormals - 1) < EPSILON) return false;
 
             // 法線が90°以上離れていれば線を引く
@@ -553,16 +595,6 @@ export default function GLBEdgesSilhouette() {
       {/* Canvas Area */}
       <div className="relative flex-1" ref={mountRef}>
         {/* Drag & Drop overlay */}
-        <div
-          ref={canvasOverlayRef}
-          className="pointer-events-none absolute inset-0 flex items-center justify-center border-2 border-dashed border-zinc-300 hover:border-zinc-400 transition-colors"
-        >
-          {/*
-          <div className="backdrop-blur-sm bg-white/60 px-4 py-2 rounded-xl text-sm text-zinc-700">
-            {status}
-          </div>
-          */}
-        </div>
       </div>
 
       <div className="px-4 py-2 text-xs text-zinc-500 bg-white border-t border-zinc-200">
