@@ -1,0 +1,856 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
+
+type MaterialMode = "hidden" | "solid" | "dashed";
+type BaseMode = "original" | "transparent" | "white" | "hidden";
+
+export default function GLBShaderSilhouetteEdges() {
+  // === UI state ===
+  const [silhouetteEnabled, setSilhouetteEnabled] = useState(true);
+  const [threshold, setThreshold] = useState(30); // degrees for hard edges
+
+  // マテリアルごとのUI制御
+  type MaterialControl = {
+    id: string; // material.uuid
+    name: string;
+    edgeMode: MaterialMode;
+    baseMode: BaseMode;
+  };
+  const [materialControls, setMaterialControls] = useState<MaterialControl[]>(
+    []
+  );
+
+  // === Refs ===
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const modelGroupRef = useRef<THREE.Group | null>(null);
+
+  const materialToMeshesRef = useRef<Map<string, THREE.Mesh[]>>(new Map());
+
+  // キャッシュ：白マテリアルをマテリアルUUIDごとに保持
+  const whiteMaterialCache = useRef<Map<string, THREE.Material>>(new Map());
+
+  // エッジ描画用パス(複数メッシュ対応)。各メッシュごとに InstancedBufferGeometry + ShaderMaterial を保持
+  type EdgePass = {
+    parentMesh: THREE.Mesh;
+    geom: THREE.InstancedBufferGeometry;
+    mesh: THREE.Mesh; // LineSegments
+    count: number;
+    uniforms: Record<string, THREE.IUniform>;
+  };
+  const edgePassesRef = useRef<EdgePass[]>([]);
+
+  // === Init three ===
+  useEffect(() => {
+    if (!canvasRef.current) return;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf4f4f5);
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(
+      55,
+      canvasRef.current.clientWidth / canvasRef.current.clientHeight,
+      0.1,
+      5000
+    );
+    camera.position.set(6, 4, 8);
+    cameraRef.current = camera;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(
+      canvasRef.current.clientWidth,
+      canvasRef.current.clientHeight
+    );
+    canvasRef.current.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = false;
+    controls.minDistance = 1;
+    controls.maxDistance = 2000;
+    controlsRef.current = controls;
+
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir.position.set(5, 10, 7);
+    scene.add(dir);
+
+    const grid = new THREE.GridHelper(50, 50, 0xaaaaaa, 0xdddddd);
+    grid.position.y = -0.001;
+    scene.add(grid);
+
+    // === Animation loop ===
+    const animate = () => {
+      requestAnimationFrame(animate);
+      controls.update();
+
+      // カメラ・モデル行列をシェーダーへ更新
+      if (cameraRef.current && edgePassesRef.current.length) {
+        for (const ep of edgePassesRef.current) {
+          ep.uniforms.uCameraPosition.value.copy(cameraRef.current.position);
+          // メッシュのワールド行列
+          ep.parentMesh.updateWorldMatrix(true, false);
+          ep.uniforms.uModelMatrix.value.copy(ep.parentMesh.matrixWorld);
+          // 法線行列 (uniform scale 前提なら modelMatrix でOKだが、ここでは正確に)
+          ep.uniforms.uNormalMatrix.value.getNormalMatrix(
+            ep.parentMesh.matrixWorld as any
+          );
+          // UI 状態
+          ep.uniforms.uSilhouetteEnabled.value = silhouetteEnabled ? 1 : 0;
+          ep.uniforms.uHardCos.value = Math.cos((threshold * Math.PI) / 180);
+        }
+      }
+
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    const onResize = () => {
+      if (!rendererRef.current || !cameraRef.current || !canvasRef.current)
+        return;
+      const w = canvasRef.current.clientWidth;
+      const h = canvasRef.current.clientHeight;
+      rendererRef.current.setSize(w, h);
+      cameraRef.current.aspect = w / h;
+      cameraRef.current.updateProjectionMatrix();
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      controls.dispose();
+      renderer.dispose();
+      if (renderer.domElement && canvasRef.current) {
+        canvasRef.current.removeChild(renderer.domElement);
+      }
+    };
+  }, [canvasRef.current]);
+
+  // === マテリアル一覧適用（切り替え処理） ===
+  useEffect(() => {
+    if (!modelGroupRef.current) return;
+
+    modelGroupRef.current.traverse((o) => {
+      if (!(o as THREE.Mesh).isMesh) return;
+      const mesh = o as THREE.Mesh;
+      const matArray = Array.isArray(mesh.material)
+        ? (mesh.material as THREE.Material[])
+        : [mesh.material as THREE.Material];
+
+      if (!mesh.userData.whiteOverlays) mesh.userData.whiteOverlays = {};
+
+      matArray.forEach((mat, idx) => {
+        if (!mat) return;
+        const ctrl = materialControls.find((m) => m.id === mat.uuid);
+        if (!ctrl) return;
+
+        // ---- Base Mode ----
+        switch (ctrl.baseMode) {
+          case "original":
+            // restore original opacity/transparent if we saved
+            if ((mat as any).__origOpacity != null) {
+              (mat as any).opacity = (mat as any).__origOpacity;
+              (mat as any).transparent =
+                (mat as any).__origTransparent || false;
+              (mat as any).depthWrite = (mat as any).__origDepthWrite ?? true;
+            }
+            mat.visible = true;
+            (mat as any).needsUpdate = true;
+
+            // ensure overlay hidden if exists
+            if (mesh.userData.whiteOverlays[mat.uuid]) {
+              mesh.userData.whiteOverlays[mat.uuid].visible = false;
+            }
+            break;
+
+          case "transparent":
+            // save original opacity if not saved
+            if ((mat as any).__origOpacity == null) {
+              (mat as any).__origOpacity = (mat as any).opacity ?? 1.0;
+              (mat as any).__origTransparent =
+                (mat as any).transparent ?? false;
+              (mat as any).__origDepthWrite = (mat as any).depthWrite ?? true;
+            }
+            mat.visible = true;
+            (mat as any).transparent = true;
+            (mat as any).opacity = 0.25;
+            (mat as any).depthWrite = false;
+            (mat as any).needsUpdate = true;
+
+            // hide overlay
+            if (mesh.userData.whiteOverlays[mat.uuid]) {
+              mesh.userData.whiteOverlays[mat.uuid].visible = false;
+            }
+            break;
+
+          case "hidden":
+            mat.visible = false;
+            (mat as any).needsUpdate = true;
+            if (mesh.userData.whiteOverlays[mat.uuid]) {
+              mesh.userData.whiteOverlays[mat.uuid].visible = false;
+            }
+            break;
+
+          case "white":
+            // Keep original material visible, and add a semi-transparent white overlay
+            mat.visible = true;
+            (mat as any).needsUpdate = true;
+
+            // create overlay mesh per-material-per-mesh if not exists
+            if (!mesh.userData.whiteOverlays[mat.uuid]) {
+              // create/get cached white material for this original material UUID
+              let whiteMat = whiteMaterialCache.current.get(mat.uuid);
+              if (!whiteMat) {
+                whiteMat = new THREE.MeshBasicMaterial({
+                  color: 0xffffff,
+                  transparent: true,
+                  opacity: 0.6,
+                  depthTest: false, // draw on top of original
+                  depthWrite: false,
+                });
+                whiteMaterialCache.current.set(mat.uuid, whiteMat);
+              }
+
+              // use a cloned geometry for this overlay so drawRange can be set per-overlay
+              const geomOrig = mesh.geometry as THREE.BufferGeometry;
+              const overlayGeom = geomOrig.clone();
+
+              overlayGeom.deleteAttribute?.("normal"); // optional: keep it light if you want
+              overlayGeom.deleteAttribute?.("uv");
+
+              overlayGeom.computeBoundingSphere?.();
+
+              // compute drawRange for this material index
+              const groups = (geomOrig as any).groups as
+                | { start: number; count: number; materialIndex?: number }[]
+                | undefined;
+              let materialIndex = -1;
+              if (Array.isArray(mesh.material)) {
+                materialIndex = (mesh.material as THREE.Material[]).findIndex(
+                  (mm) => mm && (mm as any).uuid === mat.uuid
+                );
+              } else {
+                materialIndex = 0;
+              }
+
+              if (groups && groups.length > 0) {
+                // combine ranges for groups with materialIndex
+                let start = Infinity;
+                let end = -Infinity;
+                let any = false;
+                for (const g of groups) {
+                  const gMatIndex =
+                    g.materialIndex != null
+                      ? g.materialIndex
+                      : groups.indexOf(g);
+                  if (gMatIndex === materialIndex) {
+                    any = true;
+                    start = Math.min(start, g.start);
+                    end = Math.max(end, g.start + g.count);
+                  }
+                }
+                if (any) {
+                  overlayGeom.setDrawRange(start, Math.max(0, end - start));
+                } else {
+                  // fallback whole
+                  const idxCount =
+                    geomOrig.getIndex()?.count ??
+                    geomOrig.getAttribute("position").count;
+                  overlayGeom.setDrawRange(0, idxCount);
+                }
+              } else {
+                const idxCount =
+                  geomOrig.getIndex()?.count ??
+                  geomOrig.getAttribute("position").count;
+                overlayGeom.setDrawRange(0, idxCount);
+              }
+
+              const overlay = new THREE.Mesh(overlayGeom, whiteMat);
+              overlay.frustumCulled = false;
+              overlay.visible = false;
+              overlay.renderOrder = 999; // draw last
+              // set depth properties to force on-top overlay
+              (overlay.material as THREE.Material).depthTest = false;
+              (overlay.material as THREE.Material).depthWrite = false;
+
+              mesh.add(overlay);
+              mesh.userData.whiteOverlays[mat.uuid] = overlay;
+            }
+
+            // enable overlay
+            mesh.userData.whiteOverlays[mat.uuid].visible = true;
+            break;
+        }
+      }); // matArray.forEach
+    }); // traverse
+
+    // EDGE: toggle edge passes that belong to meshes using the material
+    const ctrlMap = new Map<string, { show: boolean; dashed: boolean }>();
+    for (const c of materialControls) {
+      ctrlMap.set(c.id, {
+        show: c.edgeMode !== "hidden",
+        dashed: c.edgeMode === "dashed",
+      });
+    }
+
+    for (const ep of edgePassesRef.current) {
+      const mesh = ep.parentMesh;
+      const matArray = Array.isArray(mesh.material)
+        ? (mesh.material as THREE.Material[])
+        : [mesh.material as THREE.Material];
+
+      let show = false;
+      let dashed = false;
+      for (const mat of matArray) {
+        const v = ctrlMap.get(mat.uuid);
+        if (v) {
+          if (v.show) show = true;
+          if (v.dashed) dashed = true;
+        }
+      }
+
+      ep.mesh.visible = show;
+      if (ep.uniforms.uDashed) ep.uniforms.uDashed.value = dashed ? 1.0 : 0.0;
+    }
+  }, [materialControls, silhouetteEnabled, threshold]);
+
+  // === File D&D ===
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const prevent = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDrop = (e: DragEvent) => {
+      prevent(e);
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (
+        file.name.toLowerCase().endsWith(".glb") ||
+        file.name.toLowerCase().endsWith(".gltf")
+      ) {
+        loadGLBFile(file);
+      }
+    };
+    el.addEventListener("dragenter", prevent);
+    el.addEventListener("dragover", prevent);
+    el.addEventListener("drop", onDrop);
+    return () => {
+      el.removeEventListener("dragenter", prevent);
+      el.removeEventListener("dragover", prevent);
+      el.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
+  const onPickFile = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".glb,.gltf";
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (f) loadGLBFile(f);
+    };
+    input.click();
+  };
+
+  // === Load GLB & build edge pass ===
+  const loadGLBFile = (file: File) => {
+    if (!sceneRef.current) return;
+
+    // clear previous
+    if (modelGroupRef.current) {
+      sceneRef.current.remove(modelGroupRef.current);
+      disposeObject(modelGroupRef.current);
+      modelGroupRef.current = null;
+    }
+    for (const ep of edgePassesRef.current) {
+      ep.geom.dispose();
+      (ep.mesh.material as THREE.Material).dispose();
+      sceneRef.current.remove(ep.mesh);
+    }
+    edgePassesRef.current = [];
+    materialToMeshesRef.current.clear();
+    setMaterialControls([]);
+    whiteMaterialCache.current.forEach((mat) => mat.dispose());
+    whiteMaterialCache.current.clear();
+
+    const url = URL.createObjectURL(file);
+    const loader = new GLTFLoader();
+    loader.load(
+      url,
+      (gltf) => {
+        URL.revokeObjectURL(url);
+        const group = new THREE.Group();
+        group.add(gltf.scene);
+        modelGroupRef.current = group;
+        sceneRef.current!.add(group);
+
+        // frame camera
+        const box = new THREE.Box3().setFromObject(group);
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        group.position.sub(center);
+
+        if (cameraRef.current && controlsRef.current) {
+          const radius = Math.max(size.x, size.y, size.z) * 0.6 || 1;
+          const cam = cameraRef.current;
+          controlsRef.current.target.set(0, 0, 0);
+          cam.position.set(radius * 2.2, radius * 1.6, radius * 2.6);
+          cam.near = radius / 1000;
+          cam.far = radius * 1000;
+          cam.updateProjectionMatrix();
+          controlsRef.current.update();
+        }
+
+        const mats: MaterialControl[] = [];
+        const seen = new Set<string>();
+
+        group.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+
+          const matArray = Array.isArray(m.material)
+            ? (m.material as THREE.Material[])
+            : [m.material as THREE.Material];
+
+          matArray.forEach((mat) => {
+            if (!mat) return;
+            if (!seen.has(mat.uuid)) {
+              seen.add(mat.uuid);
+              mats.push({
+                id: mat.uuid,
+                name: (mat as any).name || `${(mat as any).type || "Material"}`,
+                edgeMode: "solid",
+                baseMode: "original",
+              });
+              materialToMeshesRef.current.set(mat.uuid, [m]);
+            } else {
+              // add mesh to mapping
+              const arr = materialToMeshesRef.current.get(mat.uuid);
+              if (arr) arr.push(m);
+            }
+          });
+        });
+
+        setMaterialControls(mats);
+
+        // 各 Mesh からエッジパスを生成
+        group.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          if (!mesh.geometry) return;
+
+          const pass = buildEdgePassForMesh(mesh);
+          if (pass) {
+            edgePassesRef.current.push(pass);
+            sceneRef.current!.add(pass.mesh);
+
+            mesh.userData.edgeLine = pass.mesh;
+          }
+        });
+      },
+      undefined,
+      (err) => console.error(err)
+    );
+  };
+
+  // === Build edge pass for single mesh ===
+  function buildEdgePassForMesh(parentMesh: THREE.Mesh): EdgePass | null {
+    // (1) シルエット抽出用に頂点マージして共有エッジを復元
+    let src = parentMesh.geometry as THREE.BufferGeometry;
+    let g = src.clone().toNonIndexed();
+    g.deleteAttribute("normal");
+    g.deleteAttribute("uv");
+    g = BufferGeometryUtils.mergeVertices(g, 1e-6);
+
+    if (!g.index) {
+      // 強制的に index 化（mergeVertices で index 付きになるが保険）
+      const count = g.attributes.position.count;
+      g.setIndex([...Array(count).keys()]);
+    }
+
+    const pos = g.getAttribute("position") as THREE.BufferAttribute;
+    const index = g.getIndex()!;
+
+    // (2) 面と法線(ローカル空間)の配列を作る
+    const faces: Array<{ a: number; b: number; c: number; n: THREE.Vector3 }> =
+      [];
+    const A = new THREE.Vector3();
+    const B = new THREE.Vector3();
+    const C = new THREE.Vector3();
+    for (let i = 0; i < index.count; i += 3) {
+      const ia = index.getX(i),
+        ib = index.getX(i + 1),
+        ic = index.getX(i + 2);
+      A.fromBufferAttribute(pos, ia);
+      B.fromBufferAttribute(pos, ib);
+      C.fromBufferAttribute(pos, ic);
+      const n = new THREE.Vector3()
+        .subVectors(C, B)
+        .cross(new THREE.Vector3().subVectors(A, B))
+        .normalize();
+      faces.push({ a: ia, b: ib, c: ic, n });
+    }
+
+    // (3) 隣接エッジ表を構築 (v1<v2 をキー)
+    type Edge = {
+      v1: number;
+      v2: number;
+      f1: number;
+      f2: number | -1; // -1 = 境界
+    };
+    const edgeMap = new Map<string, Edge>();
+    const addEdge = (i1: number, i2: number, f: number) => {
+      const a = Math.min(i1, i2),
+        b = Math.max(i1, i2);
+      const k = `${a}_${b}`;
+      const ex = edgeMap.get(k);
+      if (ex) {
+        if (ex.f2 === -1) ex.f2 = f;
+      } else {
+        edgeMap.set(k, { v1: a, v2: b, f1: f, f2: -1 });
+      }
+    };
+    faces.forEach((f, fi) => {
+      addEdge(f.a, f.b, fi);
+      addEdge(f.b, f.c, fi);
+      addEdge(f.c, f.a, fi);
+    });
+
+    const edges = Array.from(edgeMap.values());
+    if (edges.length === 0) return null;
+
+    // (4) InstancedBufferGeometry 準備
+    const base = new THREE.BufferGeometry();
+    base.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(new Float32Array([0, 0, 0, 0, 0, 0]), 3)
+    );
+
+    const geom = new THREE.InstancedBufferGeometry();
+    geom.index = null; // 使わない
+    geom.attributes = base.attributes; // 2頂点
+
+    const count = edges.length; // instance 数 = エッジ数
+
+    const p1 = new Float32Array(count * 3);
+    const p2 = new Float32Array(count * 3);
+    const n1 = new Float32Array(count * 3);
+    const n2 = new Float32Array(count * 3);
+    const has2 = new Float32Array(count);
+
+    const tmp = new THREE.Vector3();
+
+    for (let i = 0; i < count; i++) {
+      const e = edges[i];
+      const off3 = i * 3;
+
+      // 頂点座標（ローカル）
+      tmp.fromBufferAttribute(pos, e.v1);
+      p1[off3 + 0] = tmp.x;
+      p1[off3 + 1] = tmp.y;
+      p1[off3 + 2] = tmp.z;
+      tmp.fromBufferAttribute(pos, e.v2);
+      p2[off3 + 0] = tmp.x;
+      p2[off3 + 1] = tmp.y;
+      p2[off3 + 2] = tmp.z;
+
+      // 隣接面の法線（ローカル）
+      const f1 = faces[e.f1].n;
+      n1[off3 + 0] = f1.x;
+      n1[off3 + 1] = f1.y;
+      n1[off3 + 2] = f1.z;
+
+      if (e.f2 !== -1) {
+        const f2 = faces[e.f2].n;
+        n2[off3 + 0] = f2.x;
+        n2[off3 + 1] = f2.y;
+        n2[off3 + 2] = f2.z;
+        has2[i] = 1;
+      } else {
+        has2[i] = 0;
+      }
+    }
+
+    geom.setAttribute("instanceP1", new THREE.InstancedBufferAttribute(p1, 3));
+    geom.setAttribute("instanceP2", new THREE.InstancedBufferAttribute(p2, 3));
+    geom.setAttribute("instanceN1", new THREE.InstancedBufferAttribute(n1, 3));
+    geom.setAttribute("instanceN2", new THREE.InstancedBufferAttribute(n2, 3));
+    geom.setAttribute(
+      "instanceHasN2",
+      new THREE.InstancedBufferAttribute(has2, 1)
+    );
+    geom.instanceCount = count;
+
+    const materialId = (parentMesh.material as any).uuid; // 紐づけ用
+
+    // (5) ShaderMaterial
+    const uniforms: Record<string, THREE.IUniform> = {
+      uCameraPosition: { value: new THREE.Vector3() },
+      uModelMatrix: { value: new THREE.Matrix4() },
+      uNormalMatrix: { value: new THREE.Matrix3() },
+      uColor: { value: new THREE.Color(0xff00ff) },
+      uSilhouetteEnabled: { value: silhouetteEnabled ? 1 : 0 },
+      uHardCos: { value: Math.cos((threshold * Math.PI) / 180) },
+      uMaterialId: { value: materialId },
+      uDashed: { value: 0.0 },
+      uLineWidth: { value: 0.02 }, // 線幅
+      uDashSize: { value: 0.1 }, // 点線パターンの長さ
+    };
+
+    const material = new THREE.RawShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms,
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+      vertexShader: `
+      precision highp float;
+      layout(location = 0) in vec3 position; // dummy (2 verts)
+      in vec3 instanceP1;
+      in vec3 instanceP2;
+      in vec3 instanceN1;
+      in vec3 instanceN2;
+      in float instanceHasN2;
+
+      uniform mat4 projectionMatrix;
+      uniform mat4 viewMatrix;
+      uniform mat4 uModelMatrix;
+      uniform mat3 uNormalMatrix;
+      uniform vec3 uCameraPosition;
+      uniform float uHardCos; // cos(threshold)
+      uniform int uSilhouetteEnabled;
+      uniform float uLineWidth;
+      uniform float uDashSize;
+
+      out float vVisible;
+      out float vLineLength;
+      out float vLineU; // 点線用
+
+      void main() {
+        vec3 P = (gl_VertexID == 0) ? instanceP1 : instanceP2;
+        vec3 mid = (instanceP1 + instanceP2) * 0.5;
+        vec4 midW = uModelMatrix * vec4(mid, 1.0);
+        vec3 V = normalize(uCameraPosition - midW.xyz);
+        vec3 n1w = normalize(uNormalMatrix * instanceN1);
+        float visibleSil = 0.0;
+        if (uSilhouetteEnabled == 1) {
+          if (instanceHasN2 < 0.5) {
+            visibleSil = 1.0;
+          } else {
+            vec3 n2w = normalize(uNormalMatrix * instanceN2);
+            float dotNormals = dot(n1w, n2w);
+            float s1 = sign(dot(n1w, V));
+            float s2 = sign(dot(n2w, V));
+            bool orth = abs(dotNormals) < 1e-3;
+            bool anti = (dotNormals <= uHardCos);
+            bool facingOpp = (s1 * s2 < 0.0);
+            visibleSil = (orth || anti || facingOpp) ? 1.0 : 0.0;
+          }
+        }
+        vVisible = visibleSil;
+        vec4 Pw = uModelMatrix * vec4(P, 1.0);
+
+        // 点線UVと長さ
+        vLineLength = length(instanceP2 - instanceP1);
+        vLineU = gl_VertexID==0?0.0:1.0;
+
+        gl_Position = projectionMatrix * viewMatrix * Pw;
+      }
+      `,
+      fragmentShader: `
+      precision highp float;
+
+      uniform vec3 uColor;
+      uniform float uDashed;
+      uniform float uLineWidth;
+      uniform float uDashSize;
+
+      in float vVisible;
+      in float vLineU;
+      out vec4 outColor;
+
+      void main() {
+        if (vVisible < 0.5) discard;
+
+        // 点線
+        if (uDashed > 0.5) {
+          float pattern = mod(vLineU, uDashSize * 2.0) / uDashSize;
+          if(pattern>1.0) discard;
+        }
+        // ここで簡易アンチエイリアス（gl_FragCoordベース）
+        float alpha = 1.0;
+        outColor = vec4(uColor, alpha);
+      }
+      `,
+    });
+
+    const lineMesh = new THREE.LineSegments(geom, material);
+    lineMesh.frustumCulled = false;
+
+    return { parentMesh, geom, mesh: lineMesh, count, uniforms };
+  }
+
+  // === utils ===
+  // モデル破棄処理
+  function disposeObject(object: THREE.Object3D) {
+    object.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+
+        // geometry dispose
+        if (mesh.geometry) {
+          mesh.geometry.dispose();
+        }
+
+        // material dispose
+        if (Array.isArray(mesh.material)) {
+          mesh.material.forEach((mat) => mat.dispose());
+        } else {
+          mesh.material.dispose();
+        }
+
+        // overlayがアタッチされていたら明示的にdispose
+        if ((mesh as any).overlay) {
+          const overlay = (mesh as any).overlay as THREE.LineSegments;
+          mesh.remove(overlay);
+
+          if (overlay.geometry) {
+            overlay.geometry.dispose();
+          }
+          // overlay.material は共有してるなら dispose() せずキャッシュ管理側で
+        }
+      }
+    });
+  }
+
+  return (
+    <div className="h-screen w-screen bg-zinc-50 flex flex-col">
+      {/* Header / Controls */}
+      <div className="px-4 py-2 border-b border-zinc-200 bg-white flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold">
+            GLB Shader Silhouette (WebGL2)
+          </h1>
+          <button
+            className="px-3 py-1.5 text-sm rounded-xl border border-zinc-300 hover:bg-zinc-100"
+            onClick={onPickFile}
+          >
+            Choose GLB
+          </button>
+        </div>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-black"
+              checked={silhouetteEnabled}
+              onChange={(e) => setSilhouetteEnabled(e.target.checked)}
+            />
+            <span>Silhouette</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span>Threshold</span>
+            <input
+              type="range"
+              min={0}
+              max={60}
+              step={1}
+              value={threshold}
+              onChange={(e) => setThreshold(parseInt(e.target.value))}
+            />
+            <span className="tabular-nums w-8 text-right">{threshold}°</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="flex h-screen overflow-hidden" ref={containerRef}>
+        {/* Sidebarマテリアル一覧 */}
+        <div className="w-72 shrink-0 border-r border-zinc-200 bg-white overflow-y-auto p-4">
+          <h2 className="font-semibold mb-2">Materials</h2>
+          {materialControls.length === 0 && (
+            <div className="text-sm text-zinc-500">No materials loaded</div>
+          )}
+          {materialControls.map((mat, i) => (
+            <div key={mat.id} className="mb-4 p-2 border rounded-lg">
+              <div className="font-medium text-sm mb-1">{mat.name}</div>
+
+              {/* Edge Mode */}
+              <div className="text-xs text-zinc-600 mb-1">Edge</div>
+              <div className="flex gap-2 flex-wrap">
+                {(["hidden", "solid", "dashed"] as const).map((mode) => (
+                  <label key={mode} className="flex items-center gap-1 text-sm">
+                    <input
+                      type="radio"
+                      name={`edge-${mat.id}`}
+                      checked={mat.edgeMode === mode}
+                      onChange={() =>
+                        setMaterialControls((prev) =>
+                          prev.map((m, j) =>
+                            j === i ? { ...m, edgeMode: mode } : m
+                          )
+                        )
+                      }
+                    />
+                    {mode}
+                  </label>
+                ))}
+              </div>
+
+              {/* Base Mode */}
+              <div className="text-xs text-zinc-600 mt-2 mb-1">Base</div>
+              <div className="flex flex-col gap-1">
+                {(["original", "transparent", "white", "hidden"] as const).map(
+                  (mode) => (
+                    <label
+                      key={mode}
+                      className="flex items-center gap-1 text-sm"
+                    >
+                      <input
+                        type="radio"
+                        name={`base-${mat.id}`}
+                        checked={mat.baseMode === mode}
+                        onChange={() =>
+                          setMaterialControls((prev) =>
+                            prev.map((m, j) =>
+                              j === i ? { ...m, baseMode: mode } : m
+                            )
+                          )
+                        }
+                      />
+                      {mode}
+                    </label>
+                  )
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Canvas */}
+        <div className="relative flex-1" ref={canvasRef} />
+      </div>
+
+      <div className="px-4 py-2 text-xs text-zinc-500 bg-white border-t border-zinc-200">
+        GPUシェーダーで視点依存のシルエットとハードエッジを判定・描画しています。
+      </div>
+    </div>
+  );
+}
