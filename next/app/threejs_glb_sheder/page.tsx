@@ -6,43 +6,49 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-/**
- * WebGL2 + custom ShaderMaterial edge pass (instanced).
- * - CPU: 一度だけメッシュから隣接エッジと面法線(ローカル空間)を構築
- * - GPU: カメラ毎フレーム、視点依存のシルエット判定 + ハードエッジ判定をシェーダーで実行
- *
- * 注意: WebGL2 にはジオメトリシェーダーはありません。代替として「エッジごとのインスタンシング +
- *       gl_VertexID で両端点を出力する」方式を採用しています。
- *
- * 使い方: Next.js App Router のページにそのまま配置。Tailwind 前提。
- */
+type MaterialMode = "hidden" | "solid" | "dashed";
+type BaseMode = "original" | "transparent" | "white" | "hidden";
+
 export default function GLBShaderSilhouetteEdges() {
   // === UI state ===
-  const [edgesEnabled, setEdgesEnabled] = useState(true);
   const [silhouetteEnabled, setSilhouetteEnabled] = useState(true);
-  const [threshold, setThreshold] = useState(5); // degrees for hard edges
+  const [threshold, setThreshold] = useState(30); // degrees for hard edges
+
+  // マテリアルごとのUI制御
+  type MaterialControl = {
+    id: string; // material.uuid
+    name: string;
+    edgeMode: MaterialMode;
+    baseMode: BaseMode;
+  };
+  const [materialControls, setMaterialControls] = useState<MaterialControl[]>(
+    []
+  );
 
   // === Refs ===
-  const mountRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
 
+  const materialToMeshesRef = useRef<Map<string, THREE.Mesh[]>>(new Map());
+
   // エッジ描画用パス(複数メッシュ対応)。各メッシュごとに InstancedBufferGeometry + ShaderMaterial を保持
   type EdgePass = {
     parentMesh: THREE.Mesh;
     geom: THREE.InstancedBufferGeometry;
-    mesh: THREE.Mesh;
-    count: number; // instances
+    mesh: THREE.Mesh; // LineSegments
+    count: number;
     uniforms: Record<string, THREE.IUniform>;
   };
   const edgePassesRef = useRef<EdgePass[]>([]);
 
   // === Init three ===
   useEffect(() => {
-    if (!mountRef.current) return;
+    if (!canvasRef.current) return;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf4f4f5);
@@ -50,7 +56,7 @@ export default function GLBShaderSilhouetteEdges() {
 
     const camera = new THREE.PerspectiveCamera(
       55,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
+      canvasRef.current.clientWidth / canvasRef.current.clientHeight,
       0.1,
       5000
     );
@@ -58,13 +64,12 @@ export default function GLBShaderSilhouetteEdges() {
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    // WebGL2 前提 (three は自動で WebGL2 を使います)。
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(
-      mountRef.current.clientWidth,
-      mountRef.current.clientHeight
+      canvasRef.current.clientWidth,
+      canvasRef.current.clientHeight
     );
-    mountRef.current.appendChild(renderer.domElement);
+    canvasRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -102,7 +107,6 @@ export default function GLBShaderSilhouetteEdges() {
             ep.parentMesh.matrixWorld as any
           );
           // UI 状態
-          ep.uniforms.uEdgesEnabled.value = edgesEnabled ? 1 : 0;
           ep.uniforms.uSilhouetteEnabled.value = silhouetteEnabled ? 1 : 0;
           ep.uniforms.uHardCos.value = Math.cos((threshold * Math.PI) / 180);
         }
@@ -113,10 +117,10 @@ export default function GLBShaderSilhouetteEdges() {
     animate();
 
     const onResize = () => {
-      if (!rendererRef.current || !cameraRef.current || !mountRef.current)
+      if (!rendererRef.current || !cameraRef.current || !canvasRef.current)
         return;
-      const w = mountRef.current.clientWidth;
-      const h = mountRef.current.clientHeight;
+      const w = canvasRef.current.clientWidth;
+      const h = canvasRef.current.clientHeight;
       rendererRef.current.setSize(w, h);
       cameraRef.current.aspect = w / h;
       cameraRef.current.updateProjectionMatrix();
@@ -127,15 +131,193 @@ export default function GLBShaderSilhouetteEdges() {
       window.removeEventListener("resize", onResize);
       controls.dispose();
       renderer.dispose();
-      if (renderer.domElement && mountRef.current) {
-        mountRef.current.removeChild(renderer.domElement);
+      if (renderer.domElement && canvasRef.current) {
+        canvasRef.current.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [canvasRef.current]);
+
+  // === マテリアル一覧 ===
+  useEffect(() => {
+    if (!modelGroupRef.current) return;
+
+    modelGroupRef.current.traverse((o) => {
+      if (!(o as THREE.Mesh).isMesh) return;
+      const mesh = o as THREE.Mesh;
+      const matArray = Array.isArray(mesh.material)
+        ? (mesh.material as THREE.Material[])
+        : [mesh.material as THREE.Material];
+
+      if (!mesh.userData.whiteOverlays) mesh.userData.whiteOverlays = {};
+
+      matArray.forEach((mat, idx) => {
+        if (!mat) return;
+        const ctrl = materialControls.find((m) => m.id === mat.uuid);
+        if (!ctrl) return;
+
+        // ---- Base Mode ----
+        switch (ctrl.baseMode) {
+          case "original":
+            mat.visible = true;
+            mat.transparent = false;
+            // restore opacity if exists
+            if ((mat as any).__origOpacity != null) {
+              (mat as any).opacity = (mat as any).__origOpacity;
+              (mat as any).transparent =
+                (mat as any).__origTransparent || false;
+            }
+            // ensure overlay hidden if exists
+            if (mesh.userData.whiteOverlays[mat.uuid]) {
+              mesh.userData.whiteOverlays[mat.uuid].visible = false;
+            }
+            break;
+
+          case "transparent":
+            // save original opacity
+            if ((mat as any).__origOpacity == null) {
+              (mat as any).__origOpacity = (mat as any).opacity ?? 1.0;
+              (mat as any).__origTransparent =
+                (mat as any).transparent ?? false;
+            }
+            mat.visible = true;
+            mat.transparent = true;
+            (mat as any).opacity = 0.25;
+            // hide overlay
+            if (mesh.userData.whiteOverlays[mat.uuid]) {
+              mesh.userData.whiteOverlays[mat.uuid].visible = false;
+            }
+            break;
+
+          case "hidden":
+            mat.visible = false;
+            if (mesh.userData.whiteOverlays[mat.uuid]) {
+              mesh.userData.whiteOverlays[mat.uuid].visible = false;
+            }
+            break;
+
+          case "white":
+            // Keep original material visible (as requested), and add a semi-transparent white overlay
+            mat.visible = true;
+            // create overlay mesh per-material-per-mesh if not exists
+            if (!mesh.userData.whiteOverlays[mat.uuid]) {
+              // create a white material overlay
+              const whiteMat = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.5,
+                depthTest: false, // draw on top of original
+              });
+
+              // create overlay mesh that only draws the group's range corresponding to this material.
+              // If geometry has groups, find group's range for this material index.
+              const geom = mesh.geometry as THREE.BufferGeometry;
+              const overlay = new THREE.Mesh(geom, whiteMat);
+              overlay.frustumCulled = false;
+              overlay.visible = false;
+
+              // if groups exist, set drawRange to that group's start/count; otherwise whole
+              const groups = (geom as any).groups as
+                | { start: number; count: number; materialIndex?: number }[]
+                | undefined;
+
+              // find all groups that reference this material uuid — but we lack materialIndex -> uuid mapping here.
+              // We will set drawRange per-material assuming the mesh.material array order matches geometry.groups order.
+              // So determine material index in mesh.material array for this mat.uuid:
+              let materialIndex = -1;
+              if (Array.isArray(mesh.material)) {
+                materialIndex = (mesh.material as THREE.Material[]).findIndex(
+                  (mm) => mm && (mm as any).uuid === mat.uuid
+                );
+              } else {
+                materialIndex = 0;
+              }
+
+              if (groups && groups.length > 0) {
+                // combine ranges for groups with materialIndex
+                let start = Infinity;
+                let end = -Infinity;
+                let any = false;
+                for (const g of groups) {
+                  // g.materialIndex may be undefined in some exporters; assume order if undefined
+                  const gMatIndex =
+                    g.materialIndex != null
+                      ? g.materialIndex
+                      : groups.indexOf(g);
+                  if (gMatIndex === materialIndex) {
+                    any = true;
+                    start = Math.min(start, g.start);
+                    end = Math.max(end, g.start + g.count);
+                  }
+                }
+                if (any) {
+                  overlay.drawRange.start = start;
+                  overlay.drawRange.count = end - start;
+                } else {
+                  // fallback: whole geometry
+                  overlay.drawRange.start = 0;
+                  overlay.drawRange.count =
+                    geom.getIndex()?.count ??
+                    geom.getAttribute("position").count;
+                }
+              } else {
+                // no groups: whole geometry corresponds to the single material
+                overlay.drawRange.start = 0;
+                overlay.drawRange.count =
+                  geom.getIndex()?.count ?? geom.getAttribute("position").count;
+              }
+
+              // add overlay as child so it follows mesh transforms
+              mesh.add(overlay);
+              mesh.userData.whiteOverlays[mat.uuid] = overlay;
+            }
+
+            // enable overlay
+            mesh.userData.whiteOverlays[mat.uuid].visible = true;
+            break;
+        }
+      }); // matArray.forEach
+    }); // traverse
+
+    // EDGE: toggle edge passes that belong to meshes using the material
+    // Build map materialUuid -> shouldBeVisible & dashed
+    const ctrlMap = new Map<string, { show: boolean; dashed: boolean }>();
+    for (const c of materialControls) {
+      ctrlMap.set(c.id, {
+        show: c.edgeMode !== "hidden",
+        dashed: c.edgeMode === "dashed",
+      });
+    }
+
+    // For each edge pass (created per mesh), if any material used by the parentMesh has control that hides/shows edges,
+    // we derive the behavior. (Limitation: if mesh has multiple materials, we use OR semantics: if any material wants edge visible -> show)
+    for (const ep of edgePassesRef.current) {
+      const mesh = ep.parentMesh;
+      const matArray = Array.isArray(mesh.material)
+        ? (mesh.material as THREE.Material[])
+        : [mesh.material as THREE.Material];
+
+      // decide show/dashed by checking materials used by this mesh
+      let show = false;
+      let dashed = false;
+      for (const mat of matArray) {
+        const v = ctrlMap.get(mat.uuid);
+        if (v) {
+          if (v.show) show = true;
+          if (v.dashed) dashed = true;
+        } else {
+          // if material not in controls list, default to show=true (you can change)
+        }
+      }
+
+      ep.mesh.visible = show;
+      // set uniform
+      if (ep.uniforms.uDashed) ep.uniforms.uDashed.value = dashed ? 1.0 : 0.0;
+    }
+  }, [materialControls, silhouetteEnabled, threshold]);
 
   // === File D&D ===
   useEffect(() => {
-    const el = mountRef.current;
+    const el = containerRef.current;
     if (!el) return;
     const prevent = (e: DragEvent) => {
       e.preventDefault();
@@ -189,6 +371,8 @@ export default function GLBShaderSilhouetteEdges() {
       sceneRef.current.remove(ep.mesh);
     }
     edgePassesRef.current = [];
+    materialToMeshesRef.current.clear();
+    setMaterialControls([]);
 
     const url = URL.createObjectURL(file);
     const loader = new GLTFLoader();
@@ -220,20 +404,37 @@ export default function GLBShaderSilhouetteEdges() {
           controlsRef.current.update();
         }
 
-        // 半透明で本体を軽く表示（シルエットが見やすいように）
+        const mats: MaterialControl[] = [];
+        const seen = new Set<string>();
+
         group.traverse((o) => {
           const m = o as THREE.Mesh;
-          if (m.isMesh) {
-            const mat = m.material as THREE.Material | THREE.Material[];
-            const makeTrans = (mm: THREE.Material) => {
-              (mm as any).transparent = true;
-              (mm as any).opacity = 0.3;
-              (mm as any).depthWrite = false;
-            };
-            if (Array.isArray(mat)) mat.forEach(makeTrans);
-            else if (mat) makeTrans(mat);
-          }
+          if (!m.isMesh) return;
+
+          const matArray = Array.isArray(m.material)
+            ? (m.material as THREE.Material[])
+            : [m.material as THREE.Material];
+
+          matArray.forEach((mat) => {
+            if (!mat) return;
+            if (!seen.has(mat.uuid)) {
+              seen.add(mat.uuid);
+              mats.push({
+                id: mat.uuid,
+                name: (mat as any).name || `${(mat as any).type || "Material"}`,
+                edgeMode: "solid",
+                baseMode: "original",
+              });
+              materialToMeshesRef.current.set(mat.uuid, [m]);
+            } else {
+              // add mesh to mapping
+              const arr = materialToMeshesRef.current.get(mat.uuid);
+              if (arr) arr.push(m);
+            }
+          });
         });
+
+        setMaterialControls(mats);
 
         // 各 Mesh からエッジパスを生成
         group.traverse((o) => {
@@ -245,6 +446,8 @@ export default function GLBShaderSilhouetteEdges() {
           if (pass) {
             edgePassesRef.current.push(pass);
             sceneRef.current!.add(pass.mesh);
+
+            mesh.userData.edgeLine = pass.mesh;
           }
         });
       },
@@ -383,15 +586,18 @@ export default function GLBShaderSilhouetteEdges() {
     );
     geom.instanceCount = count;
 
+    const materialId = (parentMesh.material as any).uuid; // 紐づけ用
+
     // (5) ShaderMaterial
     const uniforms: Record<string, THREE.IUniform> = {
       uCameraPosition: { value: new THREE.Vector3() },
       uModelMatrix: { value: new THREE.Matrix4() },
       uNormalMatrix: { value: new THREE.Matrix3() },
-      uColor: { value: new THREE.Color(0x000000) },
-      uEdgesEnabled: { value: edgesEnabled ? 1 : 0 },
+      uColor: { value: new THREE.Color(0xff00ff) },
       uSilhouetteEnabled: { value: silhouetteEnabled ? 1 : 0 },
       uHardCos: { value: Math.cos((threshold * Math.PI) / 180) },
+      uMaterialId: { value: materialId },
+      uDashed: { value: 0.0 },
     };
 
     const material = new THREE.RawShaderMaterial({
@@ -415,7 +621,6 @@ export default function GLBShaderSilhouetteEdges() {
       uniform mat3 uNormalMatrix;
       uniform vec3 uCameraPosition;
       uniform float uHardCos; // cos(threshold)
-      uniform int uEdgesEnabled;
       uniform int uSilhouetteEnabled;
 
       out float vVisible;
@@ -442,28 +647,13 @@ export default function GLBShaderSilhouetteEdges() {
             float s1 = sign(dot(n1w, V));
             float s2 = sign(dot(n2w, V));
             bool orth = abs(dotNormals) < 1e-3;  // 直交 ≒ 稜線
-            bool anti = (dotNormals < 0.0);      // 90°超
+            bool anti = (dotNormals <= uHardCos);      // ハードエッジ判定: 法線角度 >= threshold
             bool facingOpp = (s1 * s2 < 0.0);    // 片面表・片面裏
             visibleSil = (orth || anti || facingOpp) ? 1.0 : 0.0;
           }
         }
 
-        // TODO ここの判定を見直す
-        float visibleHard = 0.0;
-        /*
-        if (uEdgesEnabled == 1) {
-          if (instanceHasN2 < 0.5) {
-            visibleHard = 1.0; // 境界は常に
-          } else {
-            vec3 n2w = normalize(uNormalMatrix * instanceN2);
-            float dotNormals = dot(n1w, n2w);
-            // ハードエッジ判定: 法線角度 >= threshold
-            visibleHard = (dotNormals <= uHardCos) ? 1.0 : 0.0;
-          }
-        }
-          */
-
-        vVisible = max(visibleSil, visibleHard);
+        vVisible = visibleSil;
 
         vec4 Pw = uModelMatrix * vec4(P, 1.0);
         gl_Position = projectionMatrix * viewMatrix * Pw;
@@ -472,23 +662,26 @@ export default function GLBShaderSilhouetteEdges() {
       fragmentShader: `
       precision highp float;
       uniform vec3 uColor;
+      uniform float uDashed;
       in float vVisible;
       out vec4 outColor;
       void main() {
         if (vVisible < 0.5) discard;
-        outColor = vec4(1.0, 0.0, 0.0, 1.0);  // 強制的に赤で描画
+
+        // 破線モード
+       if (uDashed > 0.5) {
+          float pattern = mod(gl_FragCoord.x + gl_FragCoord.y, 10.0);
+          if (pattern < 5.0) discard;
+        }
+        outColor = vec4(uColor, 1.0);
       }
       `,
     });
 
-    // 注意: WebGL の lineWidth は環境依存。必要ならクアッド拡張で画面空間太線にする実装へ拡張可。
+    const lineMesh = new THREE.LineSegments(geom, material);
+    lineMesh.frustumCulled = false;
 
-    // 2頂点×instance の Line 構造として描画するため Mesh を使う（RawShaderMaterial が custom なので ok）
-    //const mesh = new THREE.Mesh(geom, material);
-    const mesh = new THREE.LineSegments(geom, material);
-    mesh.frustumCulled = false;
-
-    return { parentMesh, geom, mesh, count, uniforms };
+    return { parentMesh, geom, mesh: lineMesh, count, uniforms };
   }
 
   // === utils ===
@@ -511,7 +704,7 @@ export default function GLBShaderSilhouetteEdges() {
       <div className="px-4 py-2 border-b border-zinc-200 bg-white flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold">
-            GLB Shader Silhouette + Hard Edges (WebGL2)
+            GLB Shader Silhouette (WebGL2)
           </h1>
           <button
             className="px-3 py-1.5 text-sm rounded-xl border border-zinc-300 hover:bg-zinc-100"
@@ -521,15 +714,6 @@ export default function GLBShaderSilhouetteEdges() {
           </button>
         </div>
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="accent-black"
-              checked={edgesEnabled}
-              onChange={(e) => setEdgesEnabled(e.target.checked)}
-            />
-            <span>Hard Edges</span>
-          </label>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -554,8 +738,72 @@ export default function GLBShaderSilhouetteEdges() {
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className="relative flex-1" ref={mountRef} />
+      <div className="flex h-screen overflow-hidden" ref={containerRef}>
+        {/* Sidebarマテリアル一覧 */}
+        <div className="w-72 shrink-0 border-r border-zinc-200 bg-white overflow-y-auto p-4">
+          <h2 className="font-semibold mb-2">Materials</h2>
+          {materialControls.length === 0 && (
+            <div className="text-sm text-zinc-500">No materials loaded</div>
+          )}
+          {materialControls.map((mat, i) => (
+            <div key={mat.id} className="mb-4 p-2 border rounded-lg">
+              <div className="font-medium text-sm mb-1">{mat.name}</div>
+
+              {/* Edge Mode */}
+              <div className="text-xs text-zinc-600 mb-1">Edge</div>
+              <div className="flex gap-2 flex-wrap">
+                {(["hidden", "solid", "dashed"] as const).map((mode) => (
+                  <label key={mode} className="flex items-center gap-1 text-sm">
+                    <input
+                      type="radio"
+                      name={`edge-${mat.id}`}
+                      checked={mat.edgeMode === mode}
+                      onChange={() =>
+                        setMaterialControls((prev) =>
+                          prev.map((m, j) =>
+                            j === i ? { ...m, edgeMode: mode } : m
+                          )
+                        )
+                      }
+                    />
+                    {mode}
+                  </label>
+                ))}
+              </div>
+
+              {/* Base Mode */}
+              <div className="text-xs text-zinc-600 mt-2 mb-1">Base</div>
+              <div className="flex flex-col gap-1">
+                {(["original", "transparent", "white", "hidden"] as const).map(
+                  (mode) => (
+                    <label
+                      key={mode}
+                      className="flex items-center gap-1 text-sm"
+                    >
+                      <input
+                        type="radio"
+                        name={`base-${mat.id}`}
+                        checked={mat.baseMode === mode}
+                        onChange={() =>
+                          setMaterialControls((prev) =>
+                            prev.map((m, j) =>
+                              j === i ? { ...m, baseMode: mode } : m
+                            )
+                          )
+                        }
+                      />
+                      {mode}
+                    </label>
+                  )
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Canvas */}
+        <div className="relative flex-1" ref={canvasRef} />
+      </div>
 
       <div className="px-4 py-2 text-xs text-zinc-500 bg-white border-t border-zinc-200">
         GPUシェーダーで視点依存のシルエットとハードエッジを判定・描画しています。
