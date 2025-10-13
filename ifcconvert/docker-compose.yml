@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  django:
+    build: .
+    command: bash -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - .:/app
+      - ./media:/app/media
+    ports:
+      - "8000:8000"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+      - worker
+
+  worker:
+    build: .
+    command: celery -A backend worker -l info
+    volumes:
+      - .:/app
+      - ./media:/app/media
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7
+
+  ifcconvert:
+    image: aecgeeks/ifcopenshell:latest
+    container_name: ifcconvert
+    volumes:
+      - ./media:/media
