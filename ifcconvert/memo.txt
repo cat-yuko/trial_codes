@@ -1,0 +1,30 @@
+[Next.js フロント]
+   │ ファイルアップロード (POST)
+   ▼
+[Django REST API]
+   │ 変換ジョブをCeleryに投入
+   ▼
+[Celery ワーカー (Python)]
+   │ IfcConvert で IFC → glTF / OBJ / FBX に変換
+   │
+   └→ 結果ファイルを MEDIA ディレクトリに保存
+   │
+   ▼
+[Redis]
+   Celery のキュー管理
+
+
+backend/
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+├── manage.py
+├── backend/
+│   ├── settings.py
+│   ├── urls.py
+│   └── celery.py
+└── api/
+    ├── views.py
+    ├── tasks.py
+    ├── models.py
+    └── urls.py
