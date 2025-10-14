@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  django:
+    build: .
+    container_name: django
+    command: >
+      sh -c "python manage.py migrate &&
+             gunicorn backend.wsgi:application --bind 0.0.0.0:8000"
+    volumes:
+      - ./backend:/app
+      - ./media:/app/media
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+      - ifcconvert
+
+  celery:
+    build: .
+    container_name: celery
+    command: celery -A backend worker --loglevel=INFO
+    volumes:
+      - ./backend:/app
+      - ./media:/app/media
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+      - ifcconvert
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+
+  ifcconvert:
+    image: aecgeeks/ifcopenshell
+    container_name: ifcconvert
+    volumes:
+      - ./media:/data
