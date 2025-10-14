@@ -28,3 +28,8 @@ backend/
     ├── tasks.py
     ├── models.py
     └── urls.py
+
+
+https://www.styublog.com/ifc-gltf
+https://zenn.dev/kiyuka/scraps/a054a249f42a93
+
