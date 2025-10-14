@@ -1,10 +1,29 @@
-from .tasks import split_and_convert_all
+from django.http import JsonResponse
+from django.conf import settings
+from pathlib import Path
+from .tasks import convert_ifc_to_glb
+import os
 
-ifc_path = "/data/input_building.ifc"
-output_dir = "/data/output_glb"
+def start_ifc_conversion(request):
+    ifc_path = Path(settings.MEDIA_ROOT) / "uploads" / "example.ifc"
+    output_dir = Path(settings.MEDIA_ROOT) / "converted"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-# 非同期で実行
-task_result = split_and_convert_all.delay(ifc_path, output_dir)
+    # 仮：IFCを階層ごとに分割してリスト化
+    storeys = ["floor1", "floor2", "floor3"]
 
-# 必要に応じて状態確認
-print("Task ID:", task_result.id)
+    # Celery並列変換
+    for storey in storeys:
+        convert_ifc_to_glb.delay(str(ifc_path), str(output_dir), storey)
+
+    return JsonResponse({"status": "started"})
+
+
+def conversion_result(request):
+    output_dir = Path(settings.MEDIA_ROOT) / "converted"
+    glb_files = [
+        os.path.join(settings.MEDIA_URL, f.name)
+        for f in sorted(output_dir.glob("*.glb"))
+    ]
+    return JsonResponse({"glb_files": glb_files})
+  
