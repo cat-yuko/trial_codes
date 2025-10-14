@@ -13,11 +13,12 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on:
       - redis
-      - worker
+      - celery
 
-  worker:
+  celery:
     build: .
-    command: celery -A backend worker -l info
+#    command: celery -A backend worker -l info
+    command: celery -A api.tasks worker --loglevel=INFO --concurrency=2
     volumes:
       - .:/app
       - ./media:/app/media
