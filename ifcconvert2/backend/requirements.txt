@@ -1,0 +1,4 @@
+django==5.0.4
+celery==5.4.0
+redis==5.0.4
+ifcopenshell==0.7.0
