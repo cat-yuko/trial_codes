@@ -1,0 +1,17 @@
+project/
+├─ backend/
+│  ├─ api/
+│  │   ├─ __init__.py
+│  │   ├─ tasks.py
+│  │   ├─ views.py
+│  │   ├─ ifc_splitter.py
+│  │   └─ urls.py
+│  ├─ backend/
+│  │   ├─ settings.py
+│  │   ├─ celery.py
+│  │   ├─ urls.py
+│  │   └─ __init__.py
+│  ├─ manage.py
+│  └─ requirements.txt
+├─ docker-compose.yml
+└─ Dockerfile
