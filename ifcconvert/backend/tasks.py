@@ -1,16 +1,11 @@
-from celery import Celery, group
+from celery import shared_task, group
 import ifcopenshell
 import subprocess
 import os
 from pathlib import Path
 
-app = Celery(
-    "ifc_tasks",
-    broker="redis://redis:6379/0",
-    backend="redis://redis:6379/0"
-)
 
-@app.task
+@shared_task
 def convert_storey(ifc_path, storey_name, output_dir):
     """
     特定の階層(IFC BuildingStorey)を部分変換
@@ -38,7 +33,7 @@ def convert_storey(ifc_path, storey_name, output_dir):
     return str(glb_path)
 
 
-@app.task
+@shared_task
 def split_and_convert_all(ifc_path, output_dir):
     """
     IFCを階層ごとに分割 → 各階層を並列変換
