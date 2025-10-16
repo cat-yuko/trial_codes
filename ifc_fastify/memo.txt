@@ -3,3 +3,45 @@ ifc-glb-viewer/
 ├─ frontend/           # Next.js + Three.js
 ├─ backend-fastify/    # IFC→GLB変換（完全メモリ内処理）
 └─ backend-django/     # 認証用（ダミーAPI）
+
+
+めも
+〇web-ifc + web-ifc-three（ブラウザまたはNode.js変換）
+
+npm install web-ifc web-ifc-three three
+
+サンプルコード
+import { IFCLoader } from 'web-ifc-three/IFCLoader';
+import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import fs from 'fs';
+
+async function convertIfcToGlb(ifcPath: string, outputPath: string) {
+  const loader = new IFCLoader();
+  loader.ifcManager.setWasmPath("node_modules/web-ifc/");
+
+  const scene = new THREE.Scene();
+  const model = await loader.loadAsync(ifcPath);
+  scene.add(model.mesh);
+
+  const exporter = new GLTFExporter();
+  exporter.parse(
+    scene,
+    (gltf) => {
+      const arrayBuffer = Buffer.from(JSON.stringify(gltf));
+      fs.writeFileSync(outputPath, arrayBuffer);
+      console.log("✅ GLB exported:", outputPath);
+    },
+    { binary: true }
+  );
+}
+
+await convertIfcToGlb("input.ifc", "output.glb");
+
+
+〇IFC.js CLI
+
+npm install -g @ifcjs/cli
+ifc convert model.ifc model.glb
+
+
