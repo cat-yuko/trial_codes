@@ -1,0 +1,22 @@
+version: '3.9'
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend-fastify
+      - backend-django
+
+  backend-fastify:
+    build: ./backend-fastify
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=4096
+
+  backend-django:
+    build: ./backend-django
+    ports:
+      - "8000:8000"
