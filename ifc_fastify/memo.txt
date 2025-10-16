@@ -1,0 +1,5 @@
+ifc-glb-viewer/
+├─ docker-compose.yml
+├─ frontend/           # Next.js + Three.js
+├─ backend-fastify/    # IFC→GLB変換（完全メモリ内処理）
+└─ backend-django/     # 認証用（ダミーAPI）
