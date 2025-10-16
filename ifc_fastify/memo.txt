@@ -10,7 +10,7 @@ ifc-glb-viewer/
 
 npm install web-ifc web-ifc-three three
 
-サンプルコード
+サンプルコード（web-ifc-threeはブラウザ用）
 import { IFCLoader } from 'web-ifc-three/IFCLoader';
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
