@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+
+# -----------------------------------------------------
+# 実行方法
+# python3 split_ifc_by_storey_and_type.py input.ifc output/
+# -----------------------------------------------------
+
+
 import sys
 import os
 import ifcopenshell
