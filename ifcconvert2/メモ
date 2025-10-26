@@ -1,0 +1,33 @@
+🧱 主なエレメントと属性の関係
+
+| 情報の種類               | 保持エレメント（関連先）                                      | 説明                         |
+| ------------------- | ------------------------------------------------- | -------------------------- |
+| **部材の形状（geometry）** | `IfcProduct` → `IfcRepresentation`                | 壁や柱などの形状を保持                |
+| **部材の型・仕様**         | `IfcTypeObject`（例：`IfcWallType`, `IfcWindowType`） | 同種の部材に共通のパラメータを保持（厚み、材料など） |
+| **寸法や構造的パラメータ**     | `IfcPropertySet`（例：`Pset_WallCommon`）             | 汎用・共通の属性セットを格納             |
+| **材料情報**            | `IfcMaterial`, `IfcMaterialLayerSet`              | 壁や床などの構成材料（RC、木材、ALCなど）    |
+| **価格・コスト情報**        | `IfcCostItem`, `IfcQuantityVolume`                | 積算や数量情報（主にBIM 5Dで使用）       |
+| **メーカー情報などのメタデータ**  | `IfcPropertySet`または`IfcDocumentReference`         | 製品仕様書やメーカーリンクを参照可能         |
+| **施工・維持管理情報**       | `IfcTask`, `IfcWorkSchedule`, `IfcOwnerHistory`   | 施工工程や責任者などの履歴を保持           |
+
+
+🧮 例：壁（IfcWall）の属性構造イメージ
+
+IfcWall（形状＋ID）
+ ├─ IsDefinedBy → IfcRelDefinesByProperties
+ │     └─ RelatedObjects → IfcPropertySet (例: Pset_WallCommon)
+ │           ├─ Name: "Reference" → 値: "RC外壁"
+ │           ├─ Name: "Thickness" → 値: 300mm
+ │           ├─ Name: "FireRating" → 値: "2時間耐火"
+ │           └─ Name: "AcousticRating" → 値: "40dB"
+ │
+ ├─ HasAssociations → IfcRelAssociatesMaterial
+ │     └─ RelatedMaterial → IfcMaterialLayerSet
+ │           ├─ IfcMaterialLayer("RC", 厚み300)
+ │           ├─ IfcMaterialLayer("塗装", 厚み5)
+ │
+ ├─ IsTypedBy → IfcRelDefinesByType
+ │     └─ RelatingType → IfcWallType
+ │           ├─ Pset_WallCommon（タイプ全体に共通する属性）
+ │
+ └─ OwnerHistory（作成日・作成者など）
