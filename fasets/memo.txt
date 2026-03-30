@@ -1,0 +1,341 @@
+✅ APIレスポンス例
+{
+  "results": [
+    { "id": 1, "name": "商品A", "category": "本" },
+    { "id": 2, "name": "商品B", "category": "家電" }
+  ],
+  "facets": {
+    "category": [
+      { "value": "本", "count": 12 },
+      { "value": "家電", "count": 5 },
+      { "value": "食品", "count": 8 }
+    ],
+    "brand": [
+      { "value": "Apple", "count": 3 },
+      { "value": "Sony", "count": 7 }
+    ]
+  }
+}
+
+✅ Django側の実装（基本）
+例：カテゴリごとの件数
+from django.db.models import Count
+
+queryset = Product.objects.all()
+
+# フィルタ適用（例）
+if category:
+    queryset = queryset.filter(category=category)
+
+# ファセット集計
+category_facets = (
+    queryset.values("category")
+    .annotate(count=Count("id"))
+    .order_by("-count")
+)
+
+
+---
+
+🎯 前提モデル（例）
+class Wood(models.Model):
+    name = models.CharField(max_length=100)
+
+class Connector(models.Model):
+    name = models.CharField(max_length=100)
+
+class Usage(models.Model):
+    name = models.CharField(max_length=100)
+
+
+class Product(models.Model):
+    name = models.CharField(max_length=255)
+
+    woods = models.ManyToManyField(Wood, related_name="products")
+    connectors = models.ManyToManyField(Connector, related_name="products")
+    usages = models.ManyToManyField(Usage, related_name="products")
+
+✅ ① 検索API（OR検索 + AND組み合わせ）
+from django.db.models import Count
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+
+class ProductSearchAPIView(APIView):
+    def get(self, request):
+        wood_ids = request.GET.get("woods")
+        connector_ids = request.GET.get("connectors")
+        usage_ids = request.GET.get("usages")
+
+        wood_ids = wood_ids.split(",") if wood_ids else []
+        connector_ids = connector_ids.split(",") if connector_ids else []
+        usage_ids = usage_ids.split(",") if usage_ids else []
+
+        qs = Product.objects.all()
+
+        # OR検索（同一ファセット内）
+        if wood_ids:
+            qs = qs.filter(woods__id__in=wood_ids)
+
+        if connector_ids:
+            qs = qs.filter(connectors__id__in=connector_ids)
+
+        if usage_ids:
+            qs = qs.filter(usages__id__in=usage_ids)
+
+        # 重複排除（必須）
+        qs = qs.distinct()
+
+        results = list(qs.values("id", "name"))
+
+        # ファセット生成
+        facets = {
+            "woods": self.get_wood_facets(connector_ids, usage_ids),
+            "connectors": self.get_connector_facets(wood_ids, usage_ids),
+            "usages": self.get_usage_facets(wood_ids, connector_ids),
+        }
+
+        return Response({
+            "results": results,
+            "facets": facets
+        })
+
+
+✅ ② ファセット（count付き・自分除外）
+🌲 woodファセット
+def get_wood_facets(self, connector_ids, usage_ids):
+    qs = Product.objects.all()
+
+    if connector_ids:
+        qs = qs.filter(connectors__id__in=connector_ids)
+
+    if usage_ids:
+        qs = qs.filter(usages__id__in=usage_ids)
+
+    facets = (
+        qs.values("woods__id", "woods__name")
+        .annotate(count=Count("id", distinct=True))
+        .order_by("-count")
+    )
+
+    return [
+        {
+            "id": f["woods__id"],
+            "name": f["woods__name"],
+            "count": f["count"]
+        }
+        for f in facets if f["woods__id"] is not None
+    ]
+
+    
+🔩 connectorファセット
+def get_connector_facets(self, wood_ids, usage_ids):
+    qs = Product.objects.all()
+
+    if wood_ids:
+        qs = qs.filter(woods__id__in=wood_ids)
+
+    if usage_ids:
+        qs = qs.filter(usages__id__in=usage_ids)
+
+    facets = (
+        qs.values("connectors__id", "connectors__name")
+        .annotate(count=Count("id", distinct=True))
+        .order_by("-count")
+    )
+
+    return [
+        {
+            "id": f["connectors__id"],
+            "name": f["connectors__name"],
+            "count": f["count"]
+        }
+        for f in facets if f["connectors__id"] is not None
+    ]
+    
+🏠 usageファセット
+def get_usage_facets(self, wood_ids, connector_ids):
+    qs = Product.objects.all()
+
+    if wood_ids:
+        qs = qs.filter(woods__id__in=wood_ids)
+
+    if connector_ids:
+        qs = qs.filter(connectors__id__in=connector_ids)
+
+    facets = (
+        qs.values("usages__id", "usages__name")
+        .annotate(count=Count("id", distinct=True))
+        .order_by("-count")
+    )
+
+    return [
+        {
+            "id": f["usages__id"],
+            "name": f["usages__name"],
+            "count": f["count"]
+        }
+        for f in facets if f["usages__id"] is not None
+    ]
+
+    
+✅ APIレスポンス例
+{
+  "results": [
+    { "id": 1, "name": "構造材A" },
+    { "id": 2, "name": "構造材B" }
+  ],
+  "facets": {
+    "woods": [
+      { "id": 1, "name": "杉", "count": 5 },
+      { "id": 2, "name": "ヒノキ", "count": 3 }
+    ],
+    "connectors": [
+      { "id": 1, "name": "ボルト", "count": 4 }
+    ],
+    "usages": [
+      { "id": 1, "name": "屋外", "count": 6 }
+    ]
+  }
+}
+🔥 実務での重要ポイントまとめ
+✔ OR検索 → __in
+✔ ファセット間 → AND
+✔ .distinct() → 必須
+✔ Count(distinct=True) → 必須
+✔ ファセットは別クエリ
+
+
+
+🎯 ① ソート追加（実務版）
+✅ 方針
+クエリパラメータで制御
+安全なホワイトリスト方式（重要）
+✔ 実装
+SORT_MAP = {
+    "name_asc": "name",
+    "name_desc": "-name",
+    "created_desc": "-id",  # 仮
+}
+sort = request.GET.get("sort")
+
+if sort in SORT_MAP:
+    qs = qs.order_by(SORT_MAP[sort])
+else:
+    qs = qs.order_by("-id")  # デフォルト
+💡 URL例
+/products?woods=1,2&sort=name_asc
+⚠️ 注意
+
+👉 order_by() は distinctの後に適用
+
+🎯 ② パフォーマンス改善（JOIN削減）
+
+ManyToMany 6〜7個ある場合👇
+👉 ここが一番重要
+
+❗ 問題の本質
+filter + annotate + values
+→ JOINがどんどん増える
+→ 重くなる
+✅ 改善①：サブクエリでID絞る（最強）
+
+👉 JOINを減らす王道パターン
+
+✔ 実装
+qs = Product.objects.all()
+
+if wood_ids:
+    qs = qs.filter(
+        id__in=Product.objects.filter(woods__id__in=wood_ids).values("id")
+    )
+
+if connector_ids:
+    qs = qs.filter(
+        id__in=Product.objects.filter(connectors__id__in=connector_ids).values("id")
+    )
+
+if usage_ids:
+    qs = qs.filter(
+        id__in=Product.objects.filter(usages__id__in=usage_ids).values("id")
+    )
+
+👉 効果
+
+JOINを分離
+クエリが軽くなる
+✅ 改善②：必要なデータだけ取得
+results = list(
+    qs.values("id", "name")
+)
+
+👉 OK（やってる）
+
+さらに👇
+
+qs = qs.only("id", "name")
+
+👉 モデル取得時の無駄削減
+
+✅ 改善③：prefetchでN+1防止
+qs = qs.prefetch_related("woods", "connectors", "usages")
+
+👉 詳細表示で効く
+
+✅ 改善④：ファセットの最適化
+
+今👇
+
+Product.objects.all()
+
+👉 これ重い
+
+✔ 改善版（IDベース）
+base_ids = qs.values_list("id", flat=True)
+
+wood_facets = (
+    Product.objects.filter(id__in=base_ids)
+    .values("woods__id", "woods__name")
+    .annotate(count=Count("id", distinct=True))
+)
+
+👉 効果
+
+全件スキャンしない
+かなり軽くなる
+✅ 改善⑤：インデックス確認
+
+最低限👇
+
+product_id
+wood_id
+connector_id
+
+👉 Djangoは基本貼ってるけど確認推奨
+
+🚀 さらに強い改善（必要なら）
+✔ キャッシュ（超効く）
+from django.core.cache import cache
+
+cache_key = f"search:{request.GET.urlencode()}"
+data = cache.get(cache_key)
+
+if data:
+    return Response(data)
+
+cache.set(cache_key, response, 60)
+
+👉 同じ検索 → 爆速
+
+🎯 最終構成（ベスト）
+項目	対応
+OR検索	__in
+AND	filter重ね
+ソート	whitelist
+JOIN削減	サブクエリ
+件数	Count(distinct)
+高速化	id絞り
+キャッシュ	optional
+👍 一言でいうと
+
+👉 「JOINを減らして、IDで絞る」が最強パターン
