@@ -1,0 +1,110 @@
+👉 実務では「相対パスを返す設計」はかなり一般的でおすすめ
+👉 ただし 開発時はNginxなしでも全然いける（むしろ普通）
+
+✅ ① Djangoは相対パスでいいのか？
+
+👉 Yes（むしろ推奨寄り）
+
+{
+  "image": "/media/sample.jpg"
+}
+理由
+環境依存しない（localhost / backend 問題回避）
+フロント・BFF・CDN構成に柔軟対応できる
+URLの責務を「インフラ側」に寄せられる
+
+👉 実務ではよくこう分離します：
+
+役割	担当
+Django	ファイル保存 + パス返却
+Nginx / CDN	配信
+フロント	表示
+✅ ② 開発時にNginxなしでどうする？
+
+👉 普通にできます 👍
+方法はシンプルです
+
+✔ 方法①：フロントでBASE_URLをつける（現実的）
+const BASE_URL = "http://localhost:8000"
+
+<Image
+  src={`${BASE_URL}${item.image}`}
+  width={300}
+  height={300}
+  alt=""
+/>
+✔ 方法②：環境変数で切り替え（実務向け）
+NEXT_PUBLIC_MEDIA_BASE_URL=http://localhost:8000
+const base = process.env.NEXT_PUBLIC_MEDIA_BASE_URL
+
+<Image src={`${base}${item.image}`} ... />
+
+👉 本番では：
+
+NEXT_PUBLIC_MEDIA_BASE_URL=
+
+（空にすれば /media/... になる）
+
+✔ 方法③：Next.jsのrewritesで吸収（かなり良い）
+// next.config.js
+async rewrites() {
+  return [
+    {
+      source: '/media/:path*',
+      destination: 'http://localhost:8000/media/:path*',
+    },
+  ]
+}
+
+👉 するとフロントは👇でOK
+
+<Image src="/media/sample.jpg" ... />
+
+👉 内部で勝手にDjangoへ飛ぶ
+
+🔥 実務で一番バランスいい構成
+
+開発：
+
+Django → /media/...
+Next.js → rewriteで localhost:8000 に転送
+
+本番：
+
+Nginx → /media 配信
+
+👉 コード一切変更なし
+
+❗ 注意（Next.js Image）
+
+rewrite使う場合でも👇必要になることあり
+
+images: {
+  remotePatterns: [
+    {
+      protocol: 'http',
+      hostname: 'localhost',
+      port: '8000',
+      pathname: '/media/**',
+    },
+  ],
+}
+🧠 まとめ
+✔ 実務的な考え方
+
+👉 Djangoは「パスだけ返す」
+
+✔ 開発時
+
+選択肢：
+
+BASE_URLつける（簡単）
+envで切替（実務向け）
+rewrite（最もスマート）
+🚀 おすすめ
+
+👉 あなたの構成ならこれがベスト
+
+Django：/media/...
+Next.js：rewrite
+本番：Nginx
