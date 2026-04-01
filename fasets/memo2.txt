@@ -108,3 +108,362 @@ rewrite（最もスマート）
 Django：/media/...
 Next.js：rewrite
 本番：Nginx
+
+
+
+---------------------------------------------------------------
+
+🖥️ Server用
+// lib/server/api.ts
+import "server-only";
+import { cookies } from "next/headers";
+
+const BASE_URL = "http://django:8000";
+
+export async function fetchWithAuth(path: string) {
+  const cookieStore = cookies();
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: {
+      Cookie: cookieStore.toString(),
+    },
+    cache: "no-store",
+  });
+
+  return res.json();
+}
+
+
+解説
+
+① import "server-only"
+
+👉 このファイルはServer専用にする宣言
+
+何が起きるか
+Client Componentから importするとエラー
+誤用を防げる
+
+👉 つまり
+
+「これは内部通信専用ですよ」
+
+を明示している
+
+② cookies() の役割
+const cookieStore = cookies();
+
+👉 ブラウザから来たCookieを取得
+
+なぜ必要？
+
+Server Componentは👇
+
+ブラウザ → Next(Server) → Django
+
+👉 このとき
+
+Cookieは「Nextまで」しか届かない
+Djangoには自動で渡らない
+だから手動で渡す
+headers: {
+  Cookie: cookieStore.toString(),
+}
+
+👉 これで
+
+ユーザーのログイン状態を維持
+③ BASE_URL = "http://django:8000"
+
+👉 Dockerのservice名で通信
+
+重要ポイント
+書き方	意味
+localhost	自分自身
+django	Djangoコンテナ
+
+👉 ServerはDocker内なので
+
+http://django:8000
+
+が正解
+
+④ cache: "no-store"
+
+👉 キャッシュしない
+
+なぜ？
+認証ありデータ
+ユーザーごとに違う
+
+👉 キャッシュすると危険
+
+例（危険パターン）
+AさんのデータをBさんに表示
+👉 ❌ 絶対NG
+⑤ 全体の流れ
+Browser
+  ↓ Cookie付き
+Next(Server Component)
+  ↓ Cookieを付与
+Django
+
+👉 完全に「認証付き内部通信」
+
+---------------------------------------------------------------
+
+🌐 Client用
+// lib/client/api.ts
+export async function fetchFromBFF(path: string, options?: RequestInit) {
+  const res = await fetch(`/api${path}`, {
+    ...options,
+    credentials: "include",
+  });
+
+  return res.json();
+}
+
+解説
+① /api${path}
+
+👉 BFF（Next API）を叩く
+
+なぜ直接Djangoじゃない？
+
+ブラウザは👇制約あり
+
+CORS
+Cookie制御
+セキュリティ
+
+👉 だから
+
+Client → BFF → Django
+② credentials: "include"
+
+👉 Cookieを送るための設定
+
+これがないと？
+Cookie送られない → 未ログイン扱い
+
+👉 めちゃくちゃ重要
+
+③ ...options
+fetchFromBFF("/products", {
+  method: "POST",
+  body: JSON.stringify(data),
+});
+
+👉 柔軟に使えるようにしてる
+
+🧩 全体像（超重要）
+【Server】
+fetchWithAuth()
+→ Django（直接・Cookie付き）
+
+【Client】
+fetchFromBFF()
+→ BFF → Django
+🔥 この設計の本質
+
+👉 環境ごとに最適な通信を使い分けている
+
+環境	通信先	理由
+Server	Django	制約なし・速い
+Client	BFF	セキュリティ・CORS
+💡 よくあるミス
+❌ Serverでこれやる
+fetch("/api/xxx")
+
+👉 動かない or バグる
+
+❌ Clientでこれやる
+fetch("http://django:8000/api")
+
+👉 CORSで死ぬ
+
+🚀 まとめ
+
+👉 この2つの関数は
+
+Server用APIクライアント
+Client用APIクライアント
+
+
+----------改善点
+
+
+👉 かなり実務レベルに近い“良い設計”です
+ただし、そのまま本番に出すにはあと一歩だけ足りないです。
+
+🎯 評価
+👍 今のコード
+✔ 設計：とても良い
+✔ 責務分離：できてる
+✔ Next.js理解：かなり高い
+
+👉 中級〜実務初級レベルは完全にクリア
+
+🧠 でも「実務レベル」にするには？
+
+プロの現場だと👇が追加されます
+
+🔥 ① エラーハンドリング（必須）
+
+今👇
+
+return res.json();
+
+👉 これだと
+
+500エラー
+401エラー
+
+全部そのまま落ちる
+
+✅ 実務版
+if (!res.ok) {
+  throw new Error(`API Error: ${res.status}`);
+}
+
+return res.json();
+💡 さらに良い形
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+if (!res.ok) {
+  const text = await res.text();
+  throw new ApiError(res.status, text);
+}
+🔥 ② 型安全（TypeScript）
+
+今👇
+
+return res.json();
+
+👉 型がない
+
+✅ 実務
+export async function fetchWithAuth<T>(path: string): Promise<T> {
+  ...
+  return res.json();
+}
+使う側
+const data = await fetchWithAuth<Product[]>("/products");
+
+👉 型安全になる
+
+🔥 ③ BASE_URLを環境変数へ
+
+今👇
+
+const BASE_URL = "http://django:8000";
+
+👉 ハードコード
+
+✅ 実務
+const BASE_URL = process.env.INTERNAL_API_URL!;
+INTERNAL_API_URL=http://django:8000
+🔥 ④ タイムアウト（地味に重要）
+
+fetchはデフォルトで
+
+👉 無限待ち
+
+✅ 実務
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 5000);
+
+const res = await fetch(url, {
+  signal: controller.signal,
+});
+
+clearTimeout(timeout);
+🔥 ⑤ ログ（デバッグ用）
+console.error("API Error:", path, res.status);
+
+👉 障害対応で必須
+
+🔥 ⑥ キャッシュ戦略（Next特有）
+
+今👇
+
+cache: "no-store"
+
+👉 OKだけど全部これだと遅い
+
+実務では使い分け
+cache: "no-store"           // 認証・ユーザー依存
+next: { revalidate: 60 }    // 公開データ
+🚀 実務レベル完成版（サンプル）
+import "server-only";
+import { cookies } from "next/headers";
+
+const BASE_URL = process.env.INTERNAL_API_URL!;
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export async function fetchWithAuth<T>(path: string): Promise<T> {
+  const cookieStore = cookies();
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      headers: {
+        Cookie: cookieStore.toString(),
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new ApiError(res.status, text);
+    }
+
+    return res.json();
+  } catch (err) {
+    console.error("API Error:", path, err);
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+🏁 レベル感まとめ
+レベル	状態
+初級	fetch直書き
+中級	lib分離（今ここ）
+実務	エラー・型・env対応
+上級	retry / logging / metrics
+🔥 一言で
+
+👉 設計は実務レベル、実装はあと一歩でプロ仕様
+
+👍 正直な評価
+
+あなたの今の状態👇
+
+👉 実務で普通に通用する一歩手前まで来てる
+
+もしやるなら次👇
+
+BFF側も同じレベルにする
+Djangoのエラーフォーマット統一
+retry / exponential backoff
+
+👉 ここまで行くと「シニア寄り設計」になります 👍
+
+を分けてる
+
+🔥 一言で
+
+👉 「通信経路を抽象化して、安全に分離している」
