@@ -1,0 +1,428 @@
+💥 ここが落とし穴
+
+このままだとまだ危険です👇
+
+❌ searchParamsは「更新されない」
+
+propsで渡したsearchParamsは：
+
+👉 初期値で固定される
+
+つまり：
+
+サイドバーで条件変更
+URL変わる
+でもClientのpropsは更新されない
+
+👉 古い条件でfetchし続ける
+
+
+✅ 正しい改善
+✔ Clientでは useSearchParams() を使う
+import { useSearchParams } from 'next/navigation'
+
+const currentParams = useSearchParams()
+✔ fetch時は「常に最新のURL」から作る
+const loadMore = async () => {
+  const params = new URLSearchParams(currentParams.toString())
+  params.set('page', String(page + 1))
+
+  const res = await fetch(`/api/items?${params}`)
+}
+🔥 さらに重要（これ忘れるとバグる）
+条件変更時にリセットする
+useEffect(() => {
+  setItems(initialData)
+  setPage(1)
+}, [searchParams]) // or currentParams.toString()
+
+
+---
+
+🧱 全体アーキテクチャ
+[Browser]
+   ↓
+[Next.js Client Component]
+   ↓
+[Next.js BFF (/api/...)]
+   ↓
+[Django API]
+
+👉 ポイント
+
+フロントは 直接Djangoを叩かない
+すべてBFF経由
+検索条件は URLで一元管理
+
+
+① Server Component（page.tsx）
+// app/search/page.tsx
+import ResultList from './ResultList'
+
+export default async function Page({ searchParams }) {
+  const query = new URLSearchParams(searchParams).toString()
+
+  const res = await fetch(`${process.env.API_BASE_URL}/api/items?${query}`, {
+    cache: 'no-store',
+  })
+
+  const data = await res.json()
+
+  return (
+    <ResultList initialData={data} />
+  )
+}
+
+👉 searchParamsは渡さない（ここ重要）
+
+
+② Client Component（無限スクロール）
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+
+export default function ResultList({ initialData }) {
+  const searchParams = useSearchParams()
+
+  const [items, setItems] = useState(initialData)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(false)
+
+  // 🔥 条件変更時リセット
+  useEffect(() => {
+    setItems(initialData)
+    setPage(1)
+  }, [searchParams.toString()])
+
+  const loadMore = async () => {
+    if (loading) return
+    setLoading(true)
+
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('page', String(page + 1))
+
+    const res = await fetch(`/api/items?${params}`)
+    const data = await res.json()
+
+    setItems(prev => [...prev, ...data])
+    setPage(prev => prev + 1)
+    setLoading(false)
+  }
+
+  return (
+    <div>
+      {items.map(item => (
+        <div key={item.id}>{item.name}</div>
+      ))}
+
+      <button onClick={loadMore}>Load More</button>
+    </div>
+  )
+}
+
+③ サイドバー（検索条件変更）
+'use client'
+
+import { useRouter, useSearchParams } from 'next/navigation'
+
+export default function Sidebar() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  const updateFilter = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString())
+
+    // 上書き（←これ重要）
+    params.set(key, value)
+
+    // ページはリセット
+    params.delete('page')
+
+    router.push(`/search?${params}`)
+  }
+
+  return (
+    <div>
+      <button onClick={() => updateFilter('category', '1')}>
+        Category 1
+      </button>
+    </div>
+  )
+}
+
+
+④ BFF（Next.js API Route）
+// app/api/items/route.ts
+import { NextRequest, NextResponse } from 'next/server'
+
+export async function GET(req: NextRequest) {
+  const query = req.nextUrl.searchParams.toString()
+
+  const res = await fetch(
+    `${process.env.DJANGO_API_URL}/items?${query}`,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+    }
+  )
+
+  const data = await res.json()
+
+  return NextResponse.json(data)
+}
+
+
+⑤ Django側（参考）
+# views.py
+def get_items(request):
+    category = request.GET.get('category')
+    page = request.GET.get('page', 1)
+
+    queryset = Item.objects.all()
+
+    if category:
+        queryset = queryset.filter(category=category)
+
+    paginator = Paginator(queryset, 20)
+    page_obj = paginator.get_page(page)
+
+    data = list(page_obj.object_list.values())
+
+    return JsonResponse(data, safe=False)
+
+
+    🎯 この構成のメリット
+✅ バグらない理由
+searchParamsは常にURLから取得
+状態の二重管理がない
+前回の条件が混ざらない
+✅ 実務的メリット
+URL共有で同じ検索結果再現できる
+SEOにも強い
+BFFで認証・ログ制御できる
+Djangoを隠蔽できる
+💥 よくあるミス（あなたの症状の原因）
+// ❌ NG
+const params = {
+  ...prevParams,
+  ...newParams,
+}
+// ❌ NG
+const [filters, setFilters] = useState()
+
+👉 状態でフィルタを持つと100%ズレる
+
+🚀 ワンランク上の実務改善
+
+ここまでできたら次は👇
+
+IntersectionObserverで無限スクロール自動化
+debounce検索
+URLの型安全（zod）
+キャッシュ戦略（revalidate）
+🔥 最後に一番大事な一行
+
+👉 「検索条件はURLだけを信じろ」
+
+ここまで理解できてるならかなり実務レベルです。
+もし希望あれば👇
+
+👉 「
+IntersectionObserver版（完全自動スクロール）」
+👉 「
+JWT認証付きBFF版」
+
+も出せます 👍
+
+
+---
+
+👉 「
+IntersectionObserver版（完全自動スクロール）」
+
+
+🎯 目的
+スクロール最下部に来たら自動で次ページ取得
+無限スクロールを自然に実現
+既存のURLベース設計はそのまま維持
+🧱 完成イメージ
+[スクロール]
+   ↓
+[一番下の要素が見える]
+   ↓
+[IntersectionObserver 発火]
+   ↓
+[loadMore() 実行]
+
+
+✅ 実務テンプレ（完成版）
+① Client Component（IntersectionObserver）
+'use client'
+
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
+
+export default function ResultList({ initialData }) {
+  const searchParams = useSearchParams()
+
+  const [items, setItems] = useState(initialData)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+
+  const observerRef = useRef<HTMLDivElement | null>(null)
+
+  // 🔥 条件変更時リセット
+  useEffect(() => {
+    setItems(initialData)
+    setPage(1)
+    setHasMore(true)
+  }, [searchParams.toString()])
+
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore) return
+
+    setLoading(true)
+
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('page', String(page + 1))
+
+    const res = await fetch(`/api/items?${params}`)
+    const data = await res.json()
+
+    if (data.length === 0) {
+      setHasMore(false)
+    } else {
+      setItems(prev => [...prev, ...data])
+      setPage(prev => prev + 1)
+    }
+
+    setLoading(false)
+  }, [loading, hasMore, page, searchParams])
+
+  // 👇 IntersectionObserver
+  useEffect(() => {
+    if (!observerRef.current) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMore()
+        }
+      },
+      {
+        root: null,
+        rootMargin: '200px', // ← 早めに読み込む（UX改善）
+        threshold: 0,
+      }
+    )
+
+    observer.observe(observerRef.current)
+
+    return () => observer.disconnect()
+  }, [loadMore])
+
+  return (
+    <div>
+      {items.map(item => (
+        <div key={item.id}>{item.name}</div>
+      ))}
+
+      {/* 👇 監視対象 */}
+      <div ref={observerRef} style={{ height: 1 }} />
+
+      {loading && <p>Loading...</p>}
+      {!hasMore && <p>No more data</p>}
+    </div>
+  )
+}
+
+
+🔥 重要ポイント解説
+① observerRef（監視ターゲット）
+<div ref={observerRef} />
+
+👉 これが画面に入ったら発火
+
+
+② rootMargin
+rootMargin: '200px'
+
+👉 見える前にロード開始
+
+UXがかなり良くなる
+実務ではほぼ必須
+
+
+③ 無限ループ防止
+if (loading || !hasMore) return
+
+👉 これないと：
+
+多重リクエスト
+API爆発
+
+
+④ hasMore管理
+if (data.length === 0) {
+  setHasMore(false)
+}
+
+👉 Django側がページングしてる前提
+
+
+💥 よくあるバグ
+❌ loadMoreが無限発火
+
+原因：
+
+useEffect(() => {
+  observer.observe(...)
+}, [])
+
+👉 loadMoreを依存に入れてない
+
+❌ 古いsearchParamsを使う
+
+👉 ちゃんとこうする：
+
+new URLSearchParams(searchParams.toString())
+❌ 条件変更でリセットされない
+
+👉 必須：
+
+useEffect(() => {
+  setItems(initialData)
+  setPage(1)
+}, [searchParams.toString()])
+🚀 さらに実務っぽくするなら
+✔ APIで hasNext を返す（おすすめ）
+
+Django：
+
+return JsonResponse({
+    "items": data,
+    "has_next": page_obj.has_next(),
+})
+
+Client：
+
+if (!data.has_next) setHasMore(false)
+
+👉 length依存より安全
+
+🎯 まとめ
+
+👉 今回の完成形
+
+検索条件 → URLで管理
+初期表示 → Server Component
+追加取得 → Client + IntersectionObserver
+API → BFF経由
+🔥 一言でいうと
+
+👉 「スクロール＝APIトリガー」にするだけ
+
