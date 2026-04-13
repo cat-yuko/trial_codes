@@ -1,0 +1,12 @@
+Server → BFF → Django
+Client → BFF → Django
+
+
+Server → BFF → Django　試すこと
+
+const res = await fetch(
+  'http://frontend:3000/api/items',
+  { cache: 'no-store' }
+)
+
+frontendのサービス名を指定する
