@@ -1,0 +1,132 @@
+Zodを使うと「バリデーション＋変換＋型定義」を1箇所にまとめられる
+
+👉 mapper関数の“上位互換”みたいなものです
+
+まずZodとは何か
+
+Zod は：
+
+型を定義できる
+バリデーションできる
+データ変換できる
+
+👉 「APIレスポンスの正規化ツール」
+
+従来のやり方（問題点）
+type User = {
+  userName: string
+}
+
+function mapUser(dto: any): User {
+  return {
+    userName: dto.user_name,
+  }
+}
+
+問題：
+
+dtoが壊れてても気づかない
+型安全じゃない
+バリデーションなし
+Zodを使った設計（本題）
+① スキーマ定義
+import { z } from "zod"
+
+const UserSchema = z.object({
+  user_name: z.string(),
+  code: z.string(),
+})
+
+👉 Djangoのレスポンス構造を定義
+
+② transformで整形
+const UserTransformedSchema = UserSchema.transform((data) => ({
+  userName: data.user_name,
+  profileUrl: `/users/${data.code}`,
+}))
+
+👉 ここでcamelCase化＆URL生成
+
+③ 型を自動生成
+type User = z.infer<typeof UserTransformedSchema>
+
+👉 型定義いらない
+
+④ 実際に使う
+const res = await fetch("/api/user")
+const json = await res.json()
+
+const user = UserTransformedSchema.parse(json)
+これで何が嬉しいのか
+① データ壊れてたら即エラー
+{ "user_name": 123 }
+
+👉 parse時に落ちる
+
+👉 バグ即発見
+
+② 型と実データが完全一致
+user.userName // 型保証あり
+
+👉 TSと実データがズレない
+
+③ 変換ロジックが1箇所に集約
+
+👉 mapper不要
+
+👉 BFFの役割も一部吸収
+
+実務での使い方（Next.js）
+
+Next.js だとこうなる：
+
+// lib/api/user.ts
+
+export async function getUser() {
+  const res = await fetch("...")
+  const json = await res.json()
+
+  return UserTransformedSchema.parse(json)
+}
+
+サーバーコンポーネント：
+
+const user = await getUser()
+
+👉 めちゃくちゃ綺麗になる
+
+BFFとの関係（重要）
+
+ここが勘違いされやすい：
+
+❌ Zod = BFFの代わり
+
+→ 違う
+
+✅ 正確な理解
+Zod → フロント内部の整形＆保証
+BFF → APIレイヤーの整形
+
+👉 レイヤーが違う
+
+じゃあどっち使うの？
+小〜中規模
+
+👉 Zodだけで十分（かなり多い）
+
+大規模 / 複雑
+
+👉 Zod ＋ BFF
+
+デメリット（正直に）
+① 学習コスト
+
+👉 最初ちょっと混乱する
+
+② 書く量増える
+
+👉 でも後で回収できる
+
+③ パフォーマンス
+
+👉 parseコストある（通常は問題なし）
