@@ -130,3 +130,238 @@ BFF → APIレイヤーの整形
 ③ パフォーマンス
 
 👉 parseコストある（通常は問題なし）
+
+
+
+ーーー
+
+✅ 実務で安定する構成
+
+こう分けます：
+
+/app/api/facet/route.ts        ← 入口（薄くする）
+/lib/api/facet.ts              ← Django呼び出し
+/lib/mappers/facet.ts          ← データ整形（ここ重要）
+/lib/schemas/facet.ts          ← Zod
+役割ごとに分解
+① route.ts（BFFの入口）
+// app/api/facet/route.ts
+
+import { searchFacet } from "@/lib/api/facet"
+
+export async function GET(req: Request) {
+  const data = await searchFacet(req)
+
+  return Response.json(data)
+}
+
+👉 何も考えない層（薄くする）
+
+② API層（Djangoとの通信）
+// lib/api/facet.ts
+
+import { mapFacet } from "@/lib/mappers/facet"
+import { FacetSchema } from "@/lib/schemas/facet"
+
+export async function searchFacet(req: Request) {
+  const res = await fetch("Django API...")
+  const json = await res.json()
+
+  const parsed = FacetSchema.parse(json)
+
+  return mapFacet(parsed)
+}
+
+👉 Zod＋mapperの司令塔
+
+③ Zod（境界防御）
+// lib/schemas/facet.ts
+
+import { z } from "zod"
+
+export const FacetSchema = z.object({
+  items: z.array(
+    z.object({
+      item_name: z.string(),
+      code: z.string(),
+    })
+  ),
+})
+④ mapper（ここに整形を書く）
+// lib/mappers/facet.ts
+
+export function mapFacet(data) {
+  return {
+    items: data.items.map((item) => ({
+      itemName: item.item_name,
+      url: `/items/${item.code}`,
+    })),
+  }
+}
+
+👉 “UI用の形”は全部ここ
+
+なぜこの構成がいいのか
+① 整形が完全に一箇所になる
+
+👉 ServerでもClientでも同じデータ
+
+② route.tsが肥大化しない
+
+👉 チーム開発で超重要
+
+③ テストしやすい
+mapper単体テストできる
+API層だけ差し替え可能
+④ BFFやめたくなっても移行できる
+
+👉 この構造、直アクセスにも流用可能
+
+あなたの現状に対する最適解
+
+今：
+
+サーバー側 → 整形あり
+クライアント側 → 整形なし（バグ）
+
+👉 つまり：
+
+整形がUI層に漏れてる
+
+修正方針（これで一発解決）
+
+① BFF（/api/facet）を作る or 強化
+② 整形ロジックを mapper に全部移動
+③ Server / Client 両方とも BFF経由にする
+
+カスタムフックとの関係
+
+今の：
+
+フィルタ処理はカスタムフック
+
+👉 これはそのままでOK
+
+役割はこう分ける：
+
+フック → パラメータ管理（状態）
+BFF → データ取得＋整形
+
+
+
+ーーーThree.js
+
+const ModelViewer = dynamic(() => import("./ModelViewer"), {
+  ssr: false
+})
+
+<div>
+  {/* 画像 */}
+  <div hidden={activeTab !== "image"}>
+    <Image />
+  </div>
+
+  {/* 3D */}
+  <div hidden={activeTab !== "3d"}>
+    <ModelViewer />
+  </div>
+</div>
+
+さらに良くする（オプション）
+初回だけ遅延ロード
+const [show3D, setShow3D] = useState(false)
+
+useEffect(() => {
+  if (activeTab === "3d") {
+    setShow3D(true)
+  }
+}, [activeTab])
+{show3D && <ModelViewer />}
+
+👉 初回だけロード
+👉 その後は保持
+
+
+"use client"
+
+import { useEffect, useState } from "react"
+import dynamic from "next/dynamic"
+
+const ModelViewer = dynamic(() => import("./ModelViewer"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center w-full h-full bg-gray-100">
+      <span className="text-sm text-gray-500">3D読み込み中...</span>
+    </div>
+  ),
+})
+
+type Props = {
+  imageUrl: string
+  modelUrl: string
+}
+
+export default function ProductMedia({ imageUrl, modelUrl }: Props) {
+  const [mode, setMode] = useState<"image" | "3d">("image")
+  const [hasLoaded3D, setHasLoaded3D] = useState(false)
+
+  // 初回だけ3Dロード
+  useEffect(() => {
+    if (mode === "3d") {
+      setHasLoaded3D(true)
+    }
+  }, [mode])
+
+  return (
+    <div className="w-full">
+      
+      {/* 表示エリア */}
+      <div className="relative w-full aspect-square border rounded-lg overflow-hidden bg-white">
+        
+        {/* 画像 */}
+        <div
+          className={`absolute inset-0 transition-opacity duration-300 ${
+            mode === "image" ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <img
+            src={imageUrl}
+            alt=""
+            className="w-full h-full object-contain"
+          />
+        </div>
+
+        {/* 3D */}
+        {hasLoaded3D && (
+          <div
+            className={`absolute inset-0 transition-opacity duration-300 ${
+              mode === "3d" ? "opacity-100" : "opacity-0 pointer-events-none"
+            }`}
+          >
+            <ModelViewer url={modelUrl} />
+          </div>
+        )}
+      </div>
+
+      {/* 切り替えボタン（例） */}
+      <div className="flex gap-2 mt-4">
+        <button
+          onClick={() => setMode("image")}
+          className="px-3 py-1 border rounded"
+        >
+          画像
+        </button>
+        <button
+          onClick={() => setMode("3d")}
+          className="px-3 py-1 border rounded"
+        >
+          3D
+        </button>
+      </div>
+    </div>
+  )
+}
+
+
+
+👉 責務が綺麗に分離される
